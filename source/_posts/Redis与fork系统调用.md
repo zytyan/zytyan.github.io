@@ -1,3 +1,8 @@
+---
+title: Redis与fork系统调用
+date: 2023-09-06 23:39:44
+tags: [Redis, Linux, 多进程]
+---
 # Redis为什么不能在Windows上工作
 
 因为Redis虽然使用ANSI C编写，兼容所有编译器版本，但是其调用了只有*nix系统才存在的fork系统调用，而Windows上没有这个调用。
