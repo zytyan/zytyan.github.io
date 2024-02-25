@@ -50,11 +50,11 @@ sorted([-1,-5,3,4])          # [-5, -1, 3, 4]
 sorted([-1,-5,3,4], key=abs) # [-1, 3, 4, -5]
 ```
 
-也可以通过匿名函数，让排序只对元组的某一个位置进行排序，而不是从头开始排序。
+也可以通过匿名函数，让排序只对元组的某一个位置比较进行排序，而不是从头开始比较。
 
 ```python
 lst = [("Alice", 27), ("Bob", 26), ("Altman", 26)]
-sorted(lst)                     #[('Alice', 27), ('Altman', 26), ('Bob', 26)]
+sorted(lst)                     # [('Alice', 27), ('Altman', 26), ('Bob', 26)]
 sorted(lst, key=lambda x: x[1]) # [('Bob', 26), ('Altman', 26), ('Alice', 27)]
 ```
 
