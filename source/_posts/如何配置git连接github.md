@@ -4,10 +4,6 @@ date: 2024-02-25 17:36:19
 tags:
 ---
 
-a
-
-
-
 ## Git如何连接GitHub
 
 ### 第一步 配置git
@@ -16,6 +12,7 @@ a
 git config --global user.name "Your Name" # 可以是任何名字
 # 这里的Email可以是任何邮箱，但是只有在GitHub上配置过的邮箱（默认是登陆邮箱）
 # 才能看到你的小绿块（活动记录）
+# 同时GitHub提供匿名邮箱 12345678+xxx@users.noreply.github.com
 git config --global user.email your_github_email@gmail.com
 ```
 
@@ -146,3 +143,4 @@ git config --global gpg.program "C:\Program Files (x86)\GnuPG\bin\gpg.exe"
 剩下的去看GitHub去吧，没什么大坑了。
 
 [Telling Git about your signing key - GitHub Docs](https://docs.github.com/en/authentication/managing-commit-signature-verification/telling-git-about-your-signing-key)
+
