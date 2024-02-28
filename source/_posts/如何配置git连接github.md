@@ -13,7 +13,8 @@ git config --global user.name "Your Name" # 可以是任何名字
 # 这里的Email可以是任何邮箱，但是只有在GitHub上配置过的邮箱（默认是登陆邮箱）
 # 才能看到你的小绿块（活动记录）
 # 同时GitHub提供匿名邮箱 12345678+xxx@users.noreply.github.com
-git config --global user.email your_github_email@gmail.com
+# 可以避免邮箱
+git config --global user.email "12345678+xxx@users.noreply.github.com"
 ```
 
 可以看到git只配置了邮箱和名字，并没有密码之类的身份验证的东西。事实上，git并不做身份验证，只有git使用的SSH或HTTPS才可能需要身份验证。因为git完全可以在单机或局域网内运行，所以身份验证对于git来说并无必要。
