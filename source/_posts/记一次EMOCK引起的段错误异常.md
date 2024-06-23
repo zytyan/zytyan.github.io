@@ -5,44 +5,9 @@ tags: [C, C++, 内存, GDB, EMOCK]
 
 ---
 
-# EMOCK 简介
+# EMOCK简介
 
-首先来简单介绍一下EMOCK，EMOCK是C和C++语言常见的MOCK库，它可以在运行时将可执行程序或动态链接库的代码替换为mock函数，以实现对函数进行打桩。其原理为修改函数入口处的代码，将其替换为跳转到mock函数的代码。
-
-例如实际业务代码中有获取1-100随机值的函数，但在测试中我们只希望验证随机值为1的情况，那么就可以使用EMOCK。
-
-```C++
-// get_random.c at libcredit.so
-__attribute__((noinline))int get_random()
-{
-    return rand() % 100;
-}
-
-int get_credit()
-{
-    if (get_random() == 1) {
-        return 100;
-    }
-    return 10;
-}
-// end
-
-// test.cpp
-#include "gtest/gtest.h"
-#include "emock/emock.h"
-extern "C"{
-int get_random();
-int get_credit();
-}
-TEST(CreditTest, should_get_100_credit_when_random_is_1)
-{
-    // 这里我们只希望获取 `get_random` 返回1的情况
-    // 但是so中的函数已经被编译，无法修改，此时需要使用EMOCK
-    // 通过下面的代码，可以让 `get_random` 函数永远返回1
-    EMOCK(get_random).stubs().with(any()).will(returnValue(1));
-    ASSERT_EQ(get_credit(), 100);
-}
-```
+可以去看我的另一篇文章，介绍了EMOCK的功能和其工作原理。
 
 # 发生了什么问题
 
