@@ -7,7 +7,7 @@ tags: [C, C++, 内存, GDB, EMOCK]
 
 # EMOCK简介
 
-可以去看我的另一篇文章，介绍了EMOCK的功能和其工作原理。
+可以去看我的[另一篇文章](https://zchan.moe/2024/06/24/EMOCK%E5%B7%A5%E4%BD%9C%E5%8E%9F%E7%90%86/)，介绍了EMOCK的功能和其工作原理。
 
 # 发生了什么问题
 
