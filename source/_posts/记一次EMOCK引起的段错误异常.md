@@ -112,6 +112,45 @@ __attribute__((noinline, optimize("O0"))) void fill_stack()
 3. 通过 `__attribute__`指定函数不被内联，让函数return后栈空间一定可以被其他函数使用。
 4. 同样通过`__attribute__`指定不优化，否则这种代码很可能被聪明的编译器优化没。
 
+
+
+## 最终定位
+
+几天后这个问题被注意到，于是尝试确定问题根因，最终定位到居然是编译器的问题。其中一行代码如下。
+
+```C++
+if (std::labs((long)dst - (long)last_end) < kMaxAllocationDelta /*这个数字是2G*/)) {
+    // 这里应该触发
+}
+```
+
+gdb断点追踪，多次逐行运行，查看变量并计算发现其确实小于2G，但却没有触发mmap，实在无法理解的我开始逐个查看寄存器与汇编。发现其对应的汇编如下。
+
+```assembly
+; ...
+mov      -0x10e0(%rbp), %rdx
+sub      %rbx, %rdx
+cmp      $0x7fffffff, %rdx
+ja       0x4ff810             ; emock::TrampolineAllocate 这里是无符号比较 (jmp above)
+; ...
+```
+
+可以看到，其加载到寄存器后，仅仅做了一个减法，并将结果与2G-1进行比较，如果无符号整数的情况下大于2G-1则跳转出去不去运行`if`块的内容，而这个剑法的结果为负数，补码表示远远大于2G-1，这也就导致了被跳过。也就是说，这里的`std::labs`根本没有生效。
+
+而一个真正做了`std::labs`的函数，其反汇编是这样的。
+
+```assembly 
+sub      %rax, %rbx          ; 先做正常的减法
+mov      %rbx, %rax          ; 将结果复制一份
+sar      $0x3f, %rax         ; 实现负数取绝对值的关键操作，如果是负数这里64位全1，正数则全0
+xor      %rax, %rbx          ; 负数异或全1了以后符号位和数字位全部取反，相当于 rbx = -rbx - 1，正数则异或全0不变
+sub      %rax, %rbx          ; 这里是 rbx = rbx - rax ，如果是负数就减-1，把上条指令的rbx少的1又加了回来，正数则减0不变
+cmp      $0x7fffffff, %rbx   ; 与2G-1比较
+jg       if_block            ; 有符号跳转 (jmp greater)
+```
+
+
+
 # 总结
 
 真是屎山上又拉了一坨看上去毫无意义的屎，没想到有一天我也能写出“不要删除这个函数，虽然它看上去没有用，但删除它程序会崩溃”的代码。
