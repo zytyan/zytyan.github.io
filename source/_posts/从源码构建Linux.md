@@ -324,16 +324,11 @@ int strcmp(const char *s1, const char *s2) {
 }
 ```
 
-然而对于`printf`这样的函数，我们就不得不直接和操作系统打交道了。操作系统为我们提供了一种叫做**系统调用**的方法，通过系统调用，我们可以
+然而`printf`这样的函数涉及到向硬件输出，我们就不得不和操作系统打交道了。``printf`是C库提供的打印函数，但如果直接和内核打交道，`printf`就无法使用了。
 
+要想直接和内核打交道，就必须要了解**系统调用**。我们可以把系统调用看做一种特殊的函数调用，只不过函数调用调用的是自己写的函数或库，但系统调用要使用操作系统的能力。由于内核工作在更高的特权级，程序只能通过特定的指令来进行系统调用。在X86_64设备上，它的汇编为`syscall`，不过作为对曾经设计的兼容，`int 80h`也是可用的指令。
 
-```bash
-jeffy:~/linux-7.0.8/_root$ ls -lh
-total 748K
--rwxr-xr-x 1 jeffy jeffy 741K May 20 23:12 init
--rw-r--r-- 1 jeffy jeffy  529 May 20 23:12 init.c
-jeffy:~/linux-7.0.8/_root$
-```
+C语言为了保持跨平台兼容性，并不会原生提供系统调用的关键字，而是使用C库包装，所以为了使用原始系统调用，我们需要一些汇编来编写系统调用的核心代码。不过C语言为我们提供了内联汇编的能力，我们可以使用内联汇编来完成核心的功能，剩下的周边功能可以继续使用C语言。
 
 
 ```C
@@ -413,7 +408,7 @@ __asm__(
 );
 ```
 
-使用以下命令编译，将会编译出一个仅有必要的核心内容的程序。
+使用以下命令编译，将会编译出一个仅有必要的核心内容的程序。它使用原始的系统调用直接完成功能，不带有额外的运行时开销。
 
 ```bash
 gcc -fno-builtin -static -nostdlib -O2 init.c -o init
@@ -429,16 +424,68 @@ gcc -fno-builtin -static -nostdlib -O2 init.c -o init
 
 ## 构建glibc
 
+在Linux中，有大量的程序都是动态链接的，我们必须要为这些程序提供它们运行的基石：C运行时库。由于C接口稳定，应用广泛，无论编程语言是什么，它们的产物几乎都会动态链接C库，用于简化语言自身库设计、提高运行性能，或者为语言本身提供支持。在这一节，我们需要构建Linux世界最核心的用户库：ld-linux 和 libc。
 
+> 常见语言中，Golang是个例外：纯Go程序默认是静态链接的，不需要任何外部库的参与。
+
+LibC作为C语言运行时库，它并非只有一种实现，比如GNU的glibc，Android的Bionic libc，为静态链接设计的musl libc，微软也在Windows中提供了自己的C运行时实现，在Windows中是 `msvcrt.dll`。而我们这次要构建的是Linux世界中最通用的`glibc`。
+
+前往[The GNU C Library](https://www.gnu.org/software/libc/#download)下载GLibC的源码。通过这次构建，我们将会构建出C语言的核心库及头文件支持，为我们之后在自己的内核中编译文件打下基础。与Linux内核不同，glibc并不会非常频繁的更新，也没有大量可配置的编译选项。
+
+> Debian 13自带的`gawk`工具可能较老，如果是这样，需要`sudo apt install gawk`更新一下。
+
+```bash
+cd glibc-2.43
+# 创建构建目录，构建结果将会放在这里
+mkdir build && cd $_
+# 进行配置，由于我们要给自己的内核安装，所以prefix需要为根目录的 /usr
+../configure --prefix=/usr
+make -j$(nproc)
+# 创建install目录
+mkdir stage
+# 构建，但不能真的把libc安装在/usr下，这会替换当前系统的libc，导致无法运行。
+# 所以必须使用DESTDIR=$(realpath stage)指定一个用户目录
+make install DESTDIR=$(realpath stage)
+```
+
+经过这次编译，我们已经在stage目录下产生了大量文件：包括标准的C库、数学计算库、加载器和头文件。这将是用户态Linux世界中最初的支柱。
 
 
 ### busybox：Linux世界的瑞士军刀
 
 如果每一个 Linux 命令（如 `ls`, `cd`, `mkdir`, `sh`）都要我们手动去写，那工作量太恐怖了。好在开源世界有 **BusyBox**。 BusyBox 将几百个常用标准 Linux 命令的精简版全部打包到了**同一个可执行二进制文件**中。它会根据你调用它时的“名字”（通过创建软链接，比如把 `ls` 链接到 `busybox`），来决定执行什么功能。在构建嵌入式系统或像我们这种精简内核时，BusyBox 是不二之选，它能帮我们一键生成最基础的用户态环境。
 
-#### 下载busybox
+#### 下载并构建busybox
 
-你可以从下载源码从源码构建，也可以下载busybox的预构建版本。
+前往[Busybox](https://busybox.net/)下载busybox源码。我下载的是1.38版本。busybox的配置需要`pkg config`，使用`sudo apt install pkg-config`
+
+如果各位下载1.37版本的话，可能会出现`make menuconfig`失败的情况，需要修改`scripts/kconfig/lxdialog/check-lxdialog.sh`中的`check`函数，把`main() {}` 改为`int main() {return 0;}`。
+
+> ```C
+> main() {}
+> int main() {return 0;}
+> ```
+> 这两种写法都是有效的C语言代码，在极早期的C语言设计（早于C89）中，函数声明可以不用写返回类型。但现代编译工具链会默认启用对这类早期写法的错误告警，导致无法进入`make menuconfig`
+
+使用下面的代码对`busybox`应用默认配置。
+
+```bash
+make defconfig
+```
+
+由于busybox使用的文件较老，它编译`tc`命令会报错，所以我们要在`make menuconfig`中删除掉对`tc`的支持。
+
+```bash
+make menuconfig
+	Networking Utilities  --->
+		[ ] tc (8.3 kb)  # 要把这个去掉
+```
+
+接下来进行编译。
+
+```bash
+make -j$(nproc)
+```
 
 #### 创建初始化脚本
 
