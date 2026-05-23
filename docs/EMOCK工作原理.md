@@ -137,7 +137,7 @@ end:
 
 这段代码在我的设备上编译后，使用`objdump -d`获得编译后文件的人类可读格式，这里我们忽略不是我们编写的函数。
 
-```assembly
+```asm
 Disassembly of section .plt.sec:
 
 0000000000001050 <printf@plt>:
@@ -218,7 +218,7 @@ Disassembly of section .text:
 
 针对以上缺陷，可以换一种思路：虽然不是所有的call都使用同一种调用方式，但是所有的call最终都会前往函数的入口，那么就可以修改函数入口的代码，让其刚刚进入就跳转到mock函数。以`add`函数举例，我们尝试覆写其函数入口，将其跳转到`sub`函数。
 
-```assembly
+```asm
 0000000000001169 <add>:
     1169:       f3 0f 1e fa             endbr64 ; 这个是安全机制，得留着
     ; 下面这些不要了，我们尝试直接覆写它
@@ -442,7 +442,7 @@ qxy@qxy:~/testc$ gcc test.c -g && ./a.out
 
 但是事实上是不会的，编译器检测到一个函数被使用了函数指针，这个函数就会从延迟绑定变为提前绑定(early banding)，其在内存中的实际位置会在主函数运行之前写入GOT表中。
 
-```assembly
+```asm
 mov    0x2d5b(%rip),%rax        # 3ff8 <rand@GLIBC_2.2.5>
 mov    %rax,-0x10(%rbp)
 ```
