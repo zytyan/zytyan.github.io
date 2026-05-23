@@ -1,10 +1,10 @@
 ---
-title: 从源码构建Linux
+title: 从源码构建一个最小 Linux 系统
 date: 2026-05-21 00:39:22
 tags: [C, Linux]
 ---
 
-# 从源码构建Linux内核
+# 从源码构建一个最小 Linux 系统
 
 本文基于WSL2，Debian13发行版。
 
@@ -20,7 +20,7 @@ tags: [C, Linux]
 wsl --install Debian
 ```
 
-在本文编写时（2026-05-17），该命令会下载Debian 13版本。若很久后Debian出更高版本，理论上不会对本文内容造成影响。
+在本文编写时（2026-05-17），该命令会下载Debian 13版本。若很久后Debian出更高版本，整体流程应该不会有本质差异，但部分软件版本、包名或默认配置可能需要按实际环境调整。
 
 #### 清理PATH环境变量
 
@@ -47,13 +47,13 @@ wsl
 对于国内Linux用户，访问Debian官方源可能会很慢，推荐使用[清华源](https://mirrors.tuna.tsinghua.edu.cn/help/debian/)。换源方法在此不过多赘述，但需要注意的是，Debian13使用了新的DEB822格式，若使用传统方式（即编辑`/etc/apt/sources.list`）换源，需要再执行以下命令，避免原有的Debian源卡住`apt update`。
 
 ```bash
-mv /etc/apt/sources.list.d/0000debian.sources \
+sudo mv /etc/apt/sources.list.d/0000debian.sources \
 /etc/apt/sources.list.d/0000debian.sources.bak
 ```
 
 ## 源码下载
 
-可以去内核归档网站([kernel.org](https://kernel.org)) 下载内核源代码，我这里用的是 linux-7.0.8，当然也可以选择其他版本的内核。进入网站后，点击下载你想要版本的 tarball 即可。
+可以去内核归档网站([kernel.org](https://kernel.org)) 下载内核源代码。本文使用的是 `linux-7.0.8`，读者也可以选择相近版本的内核；如果版本跨度较大，少量配置项名称或默认值可能会变化。进入网站后，点击下载你想要版本的 tarball 即可。
 
 > [!IMPORTANT]
 >
@@ -136,7 +136,7 @@ qemu-system-x86_64 -kernel arch/x86/boot/bzImage -nographic
 
 ### 回忆一下计算机体系结构
 
-如今我们的主流芯片都是冯诺依曼结构，它由五个部分：运算器、控制器、存储器、输入设备和输出设备组成。在这个最简Linux内核中，只有运算器、控制器和存储器（即CPU和内存），没有输入输出设备，无法与用户交互，只能执行确定性的过程。
+如今我们的主流计算机大多可以按冯诺依曼结构理解，它由五个部分：运算器、控制器、存储器、输入设备和输出设备组成。在这个最简Linux内核中，QEMU模拟的机器当然仍然存在输入输出设备，但内核还没有启用可见的输出路径，也没有可交互的用户态程序。因此从我们的视角看，它只能默默执行启动流程，无法与用户交互。
 
 ## 逐步构建一个真正可用的内核
 
@@ -144,7 +144,7 @@ qemu-system-x86_64 -kernel arch/x86/boot/bzImage -nographic
 
 在最初的内核里，我们什么也看不到，但我们希望至少内核可以告诉我们发生了什么，否则一片漆黑中，根本无法继续探索。
 
-使用`make menuconfig`来进入图形化的Linux配置界面。
+使用`make menuconfig`来进入文本菜单形式的Linux配置界面。
 
 ![image-20260518000956491](./assets/image-20260518000956491-1779295349358-10.png)
 
@@ -199,10 +199,10 @@ qemu-system-x86_64 -kernel arch/x86/boot/bzImage -append "console=ttyS0" -nograp
 
 ### 编写自己的init进程
 
-Linux内核在启动完成后，就会启动系统中的第一个用户态进程，为PID1，是所有其他用户态进程的祖先。作为所有进程的祖先，它有几个特殊点。
+Linux内核在启动完成后，就会启动系统中的第一个用户态进程，为PID1。对于这个从零开始构建的系统来说，它会成为其他用户态进程的祖先。作为这个特殊进程，它有几个特殊点。
 
-1. 它总是以root身份启动（但容器中的PID1并非如此）。
-2. 任何孤儿进程都会变为PID1的子进程。
+1. 在普通系统启动流程中，它通常以root身份启动（但容器中的PID1并非如此）。
+2. 没有被其他机制接管的孤儿进程通常会被托管给PID1；如果系统设置了subreaper，孤儿进程也可能先被对应的subreaper接管。
 3. 一旦PID1崩溃或退出，内核会立刻panic，无法继续工作。
 
 如今，几乎所有发行版都会使用`systemd`作为`init`进程，不过作为教程，本文会从头编写一个最简单的初始化进程。
@@ -239,11 +239,16 @@ Executable file formats  --->
 在编写我们自己的 `init` 进程前，必须理解程序是如何运行的： 
 
 * **动态链接（Dynamic Linking）**：程序在编译时并不包含库（如 glibc）的代码，而是在运行时依赖系统中的 `.so` 动态链接库。这种方式能节省磁盘和内存，但要求系统里必须有一套完整的动态链接加载器和基础库。
-*  **静态链接（Static Linking）**：编译时把所有需要的库函数直接“打包”进最终的二进制文件中。生成的程序体积极大，但不依赖外部动态库和动态链接器，放到相同架构、兼容内核ABI的环境中就能运行。
+*  **静态链接（Static Linking）**：编译时把所有需要的库函数直接“打包”进最终的二进制文件中。生成的程序通常更大，但不依赖外部动态库和动态链接器，放到相同架构、兼容内核ABI的环境中就能运行。
 
 由于我们现在这台设备上除了内核，什么库都没有，所以必须使用静态链接的方式编译，否则会因为缺少动态库与装载器而无法运行。
 
 现在，我们创建一个目录`_root`，在其中新建一个`init.c`，写入如下内容。
+
+```bash
+mkdir -p _root
+cd _root
+```
 
 ```C
 #include <stdbool.h>
@@ -452,7 +457,7 @@ gcc -fno-builtin -static -nostdlib -O2 init.c -o init
 
 ## 构建可用的Linux操作系统
 
-当然，一个只能回显输入的程序并不能体现出操作系统的功能的。真实世界中，一个操作系统要实现各种各样的功能，除了需要硬件和系统的支持，也需要用户态程序的支持。与其它操作系统不同，只有内核才是Linux操作系统，其他所有用户态程序和库都是第三方提供的周边工具。而像Windows或Mac，用户态工具则作为系统的一部分提供。所以我们仍然需要构建核心的用户态周边，以求能够实现一个可用的Linux。
+当然，一个只能回显输入的程序并不能体现出操作系统的功能。真实世界中，一个操作系统要实现各种各样的功能，除了需要硬件和内核的支持，也需要用户态程序的支持。严格来说，Linux 是内核；日常所说的 Linux 系统通常还包括 C 库、Shell、基础命令、init 系统等用户态组件。所以我们仍然需要构建核心的用户态周边，以求能够实现一个可用的 Linux 系统。
 
 ### glibc：Linux世界的基石
 
@@ -464,7 +469,7 @@ gcc -fno-builtin -static -nostdlib -O2 init.c -o init
 
 C库并非只有一种实现，常见的C库包括GNU的glibc、Android的Bionic libc、为静态链接设计的musl libc，微软也在Windows中提供了自己的C运行时实现，在Windows中是 `msvcrt.dll`。而我们这次要构建的是Linux世界中最通用的`glibc`。
 
-前往[The GNU C Library](https://www.gnu.org/software/libc/#download)下载glibc的源码。通过这次构建，我们将会构建出C语言的核心库及头文件支持，为我们之后在自己的内核中编译文件打下基础。与Linux内核不同，glibc并不会非常频繁的更新，也没有大量可配置的编译选项。这次编译会产生大量文件，而我们的核心目标文件有两个：`ld-linux`和`libc`。下载解压后，应该能看到图的目录结构。
+前往[The GNU C Library](https://www.gnu.org/software/libc/#download)下载glibc的源码。本文使用的是 `glibc-2.43`，读者也可以替换为相近版本。通过这次构建，我们将会构建出C语言的核心库及头文件支持，为我们之后在自己的内核中运行用户态程序打下基础。与Linux内核不同，glibc并不会非常频繁地更新，也没有大量可配置的编译选项。这次编译会产生大量文件，而我们的核心目标文件有两个：`ld-linux`和`libc`。下载解压后，应该能看到图的目录结构。
 
 这里为了降低复杂度，glibc会使用当前Debian环境提供的内核头文件完成构建。更严谨的rootfs构建流程通常会先准备目标内核的headers，再让glibc基于这些headers进行配置和编译。
 
@@ -509,7 +514,7 @@ make install DESTDIR=$(realpath stage)
 
 #### 下载并构建busybox
 
-前往[Busybox](https://busybox.net/)下载busybox源码。我下载的是目前最新的1.38版本。
+前往[Busybox](https://busybox.net/)下载busybox源码。本文使用的是 `1.38` 版本，读者也可以替换为相近版本。
 
 > [!important]
 >
@@ -527,7 +532,7 @@ make install DESTDIR=$(realpath stage)
 make defconfig
 ```
 
-由于busybox使用的文件较老，它编译`tc`命令会报错，所以我们要在`make menuconfig`中删除掉对`tc`的支持。
+在某些 BusyBox 版本和较新的编译工具链组合下，编译`tc`命令可能会报错。如果你也遇到这个问题，可以在`make menuconfig`中删除掉对`tc`的支持。
 
 ```bash
 make menuconfig
@@ -565,6 +570,10 @@ sudo chroot . bin/busybox sh
 
 安装busybox后，就可以使用它的applet进行Linux基础的操作了。此时还无法直接使用普通的Linux命令，需要使用`/bin/busybox --install -s`安装，这会自动创建busybox的软链接，此后busybox就可以根据启动的是哪个软链接来决定自己要做什么。
 
+```bash
+sudo chroot . /bin/busybox --install -s
+```
+
 > [!important]
 >
 > 使用`/bin/busybox --install`时，必须要用绝对路径，否则busybox会拒绝安装。这是因为busybox不能假设它能获取自身的绝对路径，文章后面的部分会解释为什么会有这种情况。
@@ -577,7 +586,7 @@ BusyBox安装applet链接后，通常会得到`/linuxrc`和`/sbin/init`。前提
 
 #### 动态链接程序依赖什么
 
-这里需要稍微停一下。前面我们手写的`init`是静态链接程序，所以只要内核能解析它的ELF文件，它就可以直接运行。而这里的busybox默认会动态链接glibc，因此它能否启动，不只取决于`/bin/busybox`本身是否存在，还取决于动态链接器和动态库是否在正确的位置。
+这里需要稍微停一下。前面我们手写的`init`是静态链接程序，所以只要内核能解析它的ELF文件，它就可以直接运行。而这里的 BusyBox 是借助当前 Debian 环境构建出来的，默认会动态链接宿主工具链所使用的 C 库；在本文的环境里，它对应的是 glibc。因此它能否启动，不只取决于`/bin/busybox`本身是否存在，还取决于动态链接器和动态库是否在正确的位置。
 
 可以先用`readelf`观察busybox记录的动态链接器路径。
 
@@ -619,13 +628,13 @@ Unpacking initramfs...
 Initramfs unpacking failed: invalid magic at start of compressed archive
 ```
 
-如果真的按照内核给出的日志来检测是不是生成的cpio有问题的话，就会陷入死胡同：因为生成cpio的命令是完全没有任何问题的，生成的文件也没有任何问题。本文这里直接提供答案，跳过定位过程，之后有时间再写。
+如果真的按照内核给出的日志来检测是不是生成的cpio有问题，很容易陷入死胡同：在本文这个环境里，生成cpio的命令和文件本身都没有问题。本文这里直接提供答案，跳过定位过程，之后有时间再写。
 
-事实上这是因为qemu默认分配的内存只有128MB，而我们生成的cpio有足足109M，加上内核占用后几乎没有剩余内存，内核在解包cpio时由于内存不足触发CPU reset，导致虚拟机整机重启。解决方案很简单，增加qemu的内存即可。使用`-m 1G`将内存增加到1G。
+在本文环境里，这是因为qemu默认分配的内存只有128MB，而我们生成的cpio有足足109M，加上内核占用后几乎没有剩余内存，内核在解包cpio时由于内存不足触发CPU reset，导致虚拟机整机重启。解决方案很简单，增加qemu的内存即可。使用`-m 1G`将内存增加到1G。
 
 > [!note]
 >
-> 这里不是内核panic后的自动重启。未配置`panic=`等自动重启策略时，panic通常会停在原地，通过QEMU的异常日志确认，这次是triple fault触发了CPU reset。具体路径是：内存不足首先触发缺页异常(#PF)，异常处理过程中又触发了通用保护异常(#GP)，于是CPU转入double fault(#DF)；在投递#DF时再次触发#GP，最终形成triple fault。CPU无法继续处理triple fault，只能复位，所以看到的现象就是虚拟机反复重启。
+> 这里不是内核panic后的自动重启。未配置`panic=`等自动重启策略时，panic通常会停在原地。通过QEMU的异常日志确认，本文这次是triple fault触发了CPU reset。具体路径是：内存不足首先触发缺页异常(#PF)，异常处理过程中又触发了通用保护异常(#GP)，于是CPU转入double fault(#DF)；在投递#DF时再次触发#GP，最终形成triple fault。CPU无法继续处理triple fault，只能复位，所以看到的现象就是虚拟机反复重启。
 
 使用下面的命令重新启动qemu，此时就可以进入系统了。
 
@@ -643,6 +652,7 @@ qemu-system-x86_64 -m 1G -initrd ../minilinux.cpio -kernel arch/x86/boot/bzImage
 
 ```bash
 cd ~/glibc-2.43/build/stage/
+mkdir -p etc
 cat > etc/inittab <<'EOF'
 ::askfirst:-/bin/sh
 ::ctrlaltdel:/sbin/reboot
@@ -654,7 +664,7 @@ cd ~/linux-7.0.8
 qemu-system-x86_64 -m 1G -initrd ../minilinux.cpio -kernel arch/x86/boot/bzImage -append  "console=ttyS0"  -nographic
 ```
 
- 这时，我们就有了一个最小可用的Linux操作系统了。你可以用`ls`查看文件，用`vi`编辑文本，用`sh`执行基础的脚本。
+这时，一个最小可用的Linux系统就跑起来了。你可以用`ls`查看文件，用`vi`编辑文本，用`sh`执行基础的脚本。
 
 ### 伪文件系统
 
@@ -666,9 +676,9 @@ qemu-system-x86_64 -m 1G -initrd ../minilinux.cpio -kernel arch/x86/boot/bzImage
 
 顾名思义，**伪文件系统**就是长得像文件系统，但不是文件系统的东西。真实的文件系统要有存储设备和驱动并从该设备中获取目录树，然而伪文件系统则由内核直接提供目录树，无需外部设备参与。在Linux上，最核心的文件系统是下面几个。
 
-- `devtmpfs`：用于操作内核管理的设备，`mount`、`dd`等命令会用到此文件系统内的文件。
-- `proc`：
-- `sysfs`：
+- `devtmpfs`：用于暴露内核管理的设备节点，终端、磁盘、网卡等设备通常都需要通过`/dev`下的节点访问。
+- `proc`：用于暴露进程信息和一部分内核运行时状态，`ps`、`top`等命令会依赖它读取进程列表。
+- `sysfs`：用于暴露内核设备模型、驱动、总线和内核对象，很多设备发现和配置工作都会依赖`/sys`。
 
 ```
 devtmpfs
@@ -692,6 +702,7 @@ proc/sysfs
 
 ```bash
 cd ~/glibc-2.43/build/stage/
+mkdir -p etc
 cat > etc/inittab <<'EOF'
 ::sysinit:/etc/init.d/rcS
 ::askfirst:-/bin/sh
@@ -714,7 +725,7 @@ EOF
 cat > etc/init.d/rcS <<'EOF'
 #!/bin/sh
 mkdir -p /dev /sys /proc /run 
-mount devtmpfs -t devtmpfs /dev
+mount -t devtmpfs devtmpfs /dev
 mkdir -p /dev/pts
 mount -a
 EOF
@@ -767,7 +778,7 @@ qemu-system-x86_64 -m 1G \
 	-device virtio-net-pci,netdev=net0
 ```
 
-进入后
+进入系统后，确认 BusyBox 配置中已经启用了`ip`、`udhcpc`和`wget`这些applet。QEMU的user网络默认会提供一个虚拟DHCP服务，常见网关地址是`10.0.2.2`，客户机地址通常会分配到`10.0.2.15`。
 
 ```bash
 ip link set lo up
@@ -786,7 +797,7 @@ ip route add default via 10.0.2.2 dev eth0
 echo "nameserver 1.1.1.1" > /etc/resolv.conf
 ```
 
-为eth配置IP，使用`udhcpc`获取网关，DNS这里直接指定1.1.1.1，读者也可自行指定。最后使用`wget`命令来测试一下效果。运行下面的命令后，应该能打印出实际的网络访问情况。
+上面的`udhcpc`用于从QEMU的DHCP服务获取网络参数；由于我们还没有准备完整的DHCP脚本，这里又手动配置了一次IP、默认路由和DNS。DNS这里直接指定1.1.1.1，读者也可自行指定。最后使用`wget`命令来测试一下效果。运行下面的命令后，应该能打印出实际的网络访问情况。
 
 ```bash
 wget https://www.baidu.com  -qO-
