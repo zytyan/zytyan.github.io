@@ -1,0 +1,218 @@
+.post-list {
+  display: grid;
+  gap: 18px;
+  margin-top: 28px;
+}
+
+.post-card {
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 8px;
+  padding: 20px;
+  background: var(--vp-c-bg-soft);
+}
+
+.post-card .post-title {
+  display: inline-block;
+  color: var(--vp-c-text-1);
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.post-card time {
+  display: block;
+  margin-top: 6px;
+  color: var(--vp-c-text-3);
+  font-size: 14px;
+}
+
+.post-card p {
+  margin: 12px 0 0;
+  color: var(--vp-c-text-2);
+  line-height: 1.7;
+}
+
+.post-card .post-more {
+  display: inline-block;
+  margin-top: 12px;
+  font-weight: 600;
+}
+
+.pagination {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-top: 28px;
+}
+
+.pagination a,
+.pagination .current {
+  display: inline-flex;
+  min-width: 36px;
+  height: 36px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 6px;
+  padding: 0 12px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.pagination a {
+  color: var(--vp-c-brand-1);
+  background: var(--vp-c-bg);
+}
+
+.pagination a:hover {
+  border-color: var(--vp-c-brand-1);
+  text-decoration: none;
+}
+
+.pagination .current {
+  color: var(--vp-c-bg);
+  border-color: var(--vp-c-brand-1);
+  background: var(--vp-c-brand-1);
+}
+
+.VPDocAsideOutline {
+  display: none !important;
+}
+
+.CustomDocOutline {
+  position: relative;
+  border-left: 1px solid var(--vp-c-divider);
+  padding-left: 16px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.custom-outline-title {
+  line-height: 32px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.custom-outline-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.custom-outline-list.nested {
+  padding-left: 16px;
+}
+
+.custom-outline-item {
+  position: relative;
+}
+
+.custom-outline-link {
+  display: block;
+  overflow: hidden;
+  color: var(--vp-c-text-2);
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 32px;
+  text-overflow: ellipsis;
+  transition: color 0.25s;
+  white-space: nowrap;
+}
+
+.custom-outline-link:hover,
+.custom-outline-item.is-active > .custom-outline-link {
+  color: var(--vp-c-brand-1);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.custom-outline-item.is-active > .custom-outline-link::before {
+  position: absolute;
+  top: 7px;
+  left: -17px;
+  width: 2px;
+  height: 18px;
+  border-radius: 2px;
+  background: var(--vp-c-brand-1);
+  content: "";
+}
+
+.custom-outline-item.has-children > .custom-outline-link {
+  padding-left: 18px;
+}
+
+.custom-outline-toggle {
+  position: absolute;
+  top: 7px;
+  left: 0;
+  width: 18px;
+  height: 18px;
+  border: 0;
+  padding: 0;
+  color: var(--vp-c-text-3);
+  background: transparent;
+  cursor: pointer;
+}
+
+.custom-outline-toggle::before {
+  display: block;
+  width: 0;
+  height: 0;
+  margin: 5px auto 0;
+  border-top: 5px solid currentColor;
+  border-right: 4px solid transparent;
+  border-left: 4px solid transparent;
+  content: "";
+  transition: transform 0.2s ease;
+}
+
+.custom-outline-item.has-children:not(.is-open) > .custom-outline-toggle::before {
+  transform: rotate(-90deg);
+}
+
+.VPDocAsideOutline .VPDocOutlineItem li.has-children {
+  position: relative;
+}
+
+.VPDocAsideOutline .VPDocOutlineItem li.has-children > .outline-link {
+  padding-left: 18px;
+}
+
+.VPDocAsideOutline .outline-toggle {
+  position: absolute;
+  top: 7px;
+  left: 0;
+  width: 18px;
+  height: 18px;
+  border: 0;
+  padding: 0;
+  color: var(--vp-c-text-3);
+  background: transparent;
+  cursor: pointer;
+}
+
+.VPDocAsideOutline .outline-toggle::before {
+  display: block;
+  content: "";
+  width: 0;
+  height: 0;
+  margin: 5px auto 0;
+  border-top: 5px solid currentColor;
+  border-right: 4px solid transparent;
+  border-left: 4px solid transparent;
+  transition: transform 0.2s ease;
+}
+
+.VPDocAsideOutline li.has-children.is-collapsed > .outline-toggle::before {
+  transform: rotate(-90deg);
+}
+
+.VPDocAsideOutline li.has-children.is-collapsed > .VPDocOutlineItem.nested {
+  display: none;
+}
+
+.VPDocAsideOutline .outline-link.active {
+  color: var(--vp-c-brand-1);
+  font-weight: 600;
+}
