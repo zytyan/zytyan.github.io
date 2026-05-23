@@ -104,11 +104,13 @@ sudo apt install make gcc \
 
 拥有`.config`文件后，就可以执行`make -j$(nproc)`来进行内核的编译了，稍微等待几分钟就会编译完成，此时我们就有了一个最小可运行的Linux内核了。不过现在的内核由于缺少一些驱动，还不能实际使用。
 
+> [!note]
+>
+> 如果你的设备CPU核心数较多但可用内存较低，请不要使用`make -j$(nproc)`，编译时内存不足导致的频繁换页会严重拖慢速度，请根据实际情况将`$(nproc)`替换一个较小的数字。
+
 编译出的内核文件有多个，在当前目录下有一个vmlinux，这是以ELF格式存放的Linux内核镜像，但我们实际使用的是存放于`arch/x86/boot/bzImage`中压缩后的Linux内核镜像。
 
 ![image-20260517234927135](./assets/image-20260517234927135-1779295349358-12.png)
-
-
 
 ### 运行内核
 
@@ -128,6 +130,8 @@ qemu-system-x86_64 -kernel arch/x86/boot/bzImage -nographic
 
 运行后你会看到黑乎乎的一片，什么都没有。此时并不能直接从屏幕判断内核具体跑到了哪里，因为我们还没有把内核日志导向可见的控制台；但这也正好引出了下一步：让内核把启动过程打印出来。
 
+> [!important]
+>
 > 按下Ctrl + A后，按X退出QEMU，推荐退出后再使用命令`reset`重置一下窗口内容，否则多行文本渲染可能有bug。
 
 ### 回忆一下计算机体系结构
@@ -177,11 +181,15 @@ qemu-system-x86_64 -kernel arch/x86/boot/bzImage -append "console=ttyS0" -nograp
 
 这里的`-append`是内核的启动参数，通过使用该参数，内核将信息输出到console，而console的内容被导向ttyS0，而qemu中，ttyS0会被打印到标准输出中，此时就可以看到启动日志了。
 
+> [!tip]
+>
 > `tty`：代表 Teletypewriter（电传打字机）。在计算机早期，人们使用电传打字机作为输入输出设备。虽然现在技术早就更新换代了，但 Linux 依然沿用了 `tty` 这个词来表示所有的**终端设备**。
 >
 > `S`：代表 **Serial**（串行）。这意味着它是一个串行通信接口。
 >
 > `0`：代表**编号**。在计算机世界里，计数通常从 0 开始。所以 `ttyS0` 是第一个串口（COM1），`ttyS1` 是第二个串口（COM2），以此类推。
+>
+> 如果不用`-nographic`参数，那么`-append "console=ttyS0"`也可以去掉。
 
 ![image-20260518003554489](./assets/image-20260518003554489-1779295349358-13.png)
 
@@ -199,7 +207,7 @@ Linux内核在启动完成后，就会启动系统中的第一个用户态进程
 
 如今，几乎所有发行版都会使用`systemd`作为`init`进程，不过作为教程，本文会从头编写一个最简单的初始化进程。
 
-不过在正式编写前，我们需要解决一些问题，以让我们的程序可以在自己的内核里正常工作。
+在正式编写前，我们需要解决一些问题，以让我们的程序可以在自己的内核里正常工作。
 
 #### 架构匹配：64位内核
 
@@ -492,7 +500,7 @@ make install DESTDIR=$(realpath stage)
 
 > [!tip]
 >
-> 内核被叫做Kernel，而用户直接操作的是外面的那层壳（Shell），平时的库就是连接两个世界的桥梁。
+> 内核被叫做Kernel，而用户直接操作的是外面的那层壳（Shell），系统调用是连接两个世界的桥梁，而库就是上这个桥最常用的方式。
 
 
 ### busybox：Linux世界的瑞士军刀
@@ -617,7 +625,7 @@ Initramfs unpacking failed: invalid magic at start of compressed archive
 
 > [!note]
 >
-> 这里不是内核panic后的自动重启。未配置`panic=`等自动重启策略时，panic通常会停在原地，而我通过QEMU的异常日志确认，这次是triple fault触发了CPU reset。具体路径是：内存不足首先触发缺页异常(#PF)，异常处理过程中又触发了通用保护异常(#GP)，于是CPU转入double fault(#DF)；在投递#DF时再次触发#GP，最终形成triple fault。CPU无法继续处理triple fault，只能复位，所以看到的现象就是虚拟机反复重启。
+> 这里不是内核panic后的自动重启。未配置`panic=`等自动重启策略时，panic通常会停在原地，通过QEMU的异常日志确认，这次是triple fault触发了CPU reset。具体路径是：内存不足首先触发缺页异常(#PF)，异常处理过程中又触发了通用保护异常(#GP)，于是CPU转入double fault(#DF)；在投递#DF时再次触发#GP，最终形成triple fault。CPU无法继续处理triple fault，只能复位，所以看到的现象就是虚拟机反复重启。
 
 使用下面的命令重新启动qemu，此时就可以进入系统了。
 
@@ -631,52 +639,164 @@ qemu-system-x86_64 -m 1G -initrd ../minilinux.cpio -kernel arch/x86/boot/bzImage
 
 ### 处理缺失的tty
 
-重新启动后，你会看到屏幕循环打印`can't open /dev/tty2`这样的信息，这是因为我们的`/dev`目录下还没有自动生成设备节点。在WSL2中可以用`ls /dev`查看Linux内核自动生成的设备节点。这就需要我们重新配置内核，打开`devtmpfs`选项。记得也要勾选`Automount devtmpfs at /dev, after the kernel mounted the rootfs`。而更下面的`Use nosuid,noexec mount options on devtmpfs`是安全选项，目前我们的系统开它与否没有区别，可以根据心情开。
+重新启动后，你会看到屏幕循环打印`can't open /dev/tty2`这样的信息，这是因为`busybox`的`init`程序默认会尝试在`tty2, tty3, tty4`上都启用`getty`，但新构建的系统中并没有这些串口设备。一个简单的解决方案是修改配置文件，调整`init`的行为。
 
-```text
-Device Drivers  --->
-  Generic Driver Options  --->
-    [*] Maintain a devtmpfs filesystem to mount at /dev
-    [*] Automount devtmpfs at /dev, after the kernel mounted the rootfs
+```bash
+cd ~/glibc-2.43/build/stage/
+cat > etc/inittab <<'EOF'
+::askfirst:-/bin/sh
+::ctrlaltdel:/sbin/reboot
+::shutdown:/bin/umount -a -r
+EOF
+
+find . -print0 | cpio -H newc -0 -o --owner=0:0 > ../../../minilinux.cpio
+cd ~/linux-7.0.8
+qemu-system-x86_64 -m 1G -initrd ../minilinux.cpio -kernel arch/x86/boot/bzImage -append  "console=ttyS0"  -nographic
 ```
 
-![image-20260523140136065](./assets/image-20260523140136065.png)
-
-重新编译后，我们的新系统就初具雏形了。现在你可以用`ls`查看文件，用`vi`进行简单的文本编辑。
-
-如果之后关闭了devtmpfs自动挂载，或者换到不自动挂载`/dev`的启动方式，也可以在后面的初始化脚本里手动执行`mount -t devtmpfs devtmpfs /dev`。
-
-![image-20260523140821213](./assets/image-20260523140821213.png)
-
-不过如果你尝试使用`mount`、`ps`这类命令，就会发现它们会报错。
-
-![image-20260523141020513](./assets/image-20260523141020513.png)
-
-这代表我们缺失了关键功能：缺少`/proc`这样的伪文件系统。
+ 这时，我们就有了一个最小可用的Linux操作系统了。你可以用`ls`查看文件，用`vi`编辑文本，用`sh`执行基础的脚本。
 
 ### 伪文件系统
 
-等后面挂载好`/proc`后，可以直接查看内核最终启动了哪个PID 1程序。
+在普通的Linux系统下使用`mount`查看文件系统，会发现目录下已经挂载了大量设备。使用`ps -ef`查看进程，也能看到不少进程。然而在我们的新系统中，你会发现这些功能都不能用。
 
-```bash
-cat /proc/1/comm
-readlink /proc/1/exe
-tr '\0' ' ' < /proc/1/cmdline
+![image-20260523225725699](./assets/image-20260523225725699.png)
+
+与其他操作系统不同，Linux奉行一切皆文件的法则，很多看起来需要特定接口才能实现的功能，在Linux中都被抽象为了文件操作，这其中包括查看进程信息、配置操作系统、内核调试、创建共享内存甚至直接操作硬件。这些操作大多是通过伪文件系统实现的。
+
+顾名思义，**伪文件系统**就是长得像文件系统，但不是文件系统的东西。真实的文件系统要有存储设备和驱动并从该设备中获取目录树，然而伪文件系统则由内核直接提供目录树，无需外部设备参与。在Linux上，最核心的文件系统是下面几个。
+
+- `devtmpfs`：用于操作内核管理的设备，`mount`、`dd`等命令会用到此文件系统内的文件。
+- `proc`：
+- `sysfs`：
+
+```
+devtmpfs
+-> Device Drivers
+  -> Generic Driver Options
+    -> Maintain a devtmpfs filesystem to mount at /dev (DEVTMPFS [=y])
+proc/sysfs
+-> File systems
+  -> Pseudo filesystems
+    -> /proc file system support (PROC_FS [=y])
+    -> sysfs file system support (SYSFS [=y])
 ```
 
-其中`/proc/1/comm`能看到进程名，`/proc/1/exe`能看到实际执行文件，`/proc/1/cmdline`则能看到启动参数。用这几个文件可以确认内核究竟启动的是`/init`、`/sbin/init`，还是其他fallback路径。
-
-
+启用这几个选项后，内核就为我们提供了最核心的伪文件系统支持。
 
 ### 编写初始化脚本
 
+不过在Linux世界中，内核为我们做的事情真的很少。看似一开机就会出现的根目录下的几个伪文件系统(`/dev, /proc, /sys`)并非是内核挂载的，而是用户态程序创建的。在这个从零开始搭建的Linux中，我们必须自己完成挂载。
+
+我们要再一次编辑 `/etc/inittab`，写入我们要执行的初始化脚本。
+
+```bash
+cd ~/glibc-2.43/build/stage/
+cat > etc/inittab <<'EOF'
+::sysinit:/etc/init.d/rcS
+::askfirst:-/bin/sh
+::ctrlaltdel:/sbin/reboot
+::shutdown:/bin/umount -a -r
+EOF
+
+mkdir -p etc/init.d
+
+# 编写fstab
+cat > etc/fstab <<'EOF'
+# 设备名  挂载点    设备类型   挂载属性           dump备份 fsck顺序  
+proc      /proc     proc      nosuid,noexec,nodev   0 0
+sysfs     /sys      sysfs     nosuid,noexec,nodev    0 0
+devpts    /dev/pts  devpts    mode=0755,nosuid    0 0
+tmpfs     /run      tmpfs     mode=0755,nosuid,nodev    0 0
+EOF
+
+#编写初始化脚本
+cat > etc/init.d/rcS <<'EOF'
+#!/bin/sh
+mkdir -p /dev /sys /proc /run 
+mount devtmpfs -t devtmpfs /dev
+mkdir -p /dev/pts
+mount -a
+EOF
+chmod +x etc/init.d/rcS
+
+# 重新启动操作系统
+find . -print0 | cpio -H newc -0 -o --owner=0:0 > ../../../minilinux.cpio
+cd ~/linux-7.0.8
+qemu-system-x86_64 -m 1G -initrd ../minilinux.cpio -kernel arch/x86/boot/bzImage -append  "console=ttyS0"  -nographic
+```
+
+此时，我们的大多数功能就OK了。
+
+![image-20260523235618893](./assets/image-20260523235618893.png)
+
 ### 网络支持
 
+现在我们只有一个单机的Linux，为了让这个Linux能真正可用，我们需要为设备添加网络能力。
 
+首先在首页中启用`Networking support`，并参考下方配置配置好协议栈支持。
+
+```
+General setup
+  [*] Configure standard kernel features (expert users)  --->
+    
+ 
+[*] Networking support  --->
+      Networking options  --->
+        [*] Packet socket
+        [*] Unix domain sockets
+        [*] TCP/IP networking
+        
+-> Device Drivers
+  [*] PCI support  --->
+  [*] Virtio drivers  --->  # 要先启动它
+  	[*]   PCI driver for virtio devices
+  [*] Network device support  --->
+  	[*]   Network core driver support
+  	  [*]     Virtio network driver
+```
+
+```bash
+make -j$(nproc)
+qemu-system-x86_64 -m 1G \
+	-initrd ../minilinux.cpio \
+	-kernel arch/x86/boot/bzImage \
+	-append  "console=ttyS0" \
+	-nographic \
+	-netdev user,id=net0 \
+	-device virtio-net-pci,netdev=net0
+```
+
+进入后
+
+```bash
+ip link set lo up
+ip link set eth0 up
+udhcpc -i eth0
+# udhcpc: started, v1.38.0
+# udhcpc: broadcasting discover
+# udhcpc: broadcasting select for 10.0.2.15, server 10.0.2.2
+# udhcpc: lease of 10.0.2.15 obtained from 10.0.2.2, lease time 86400
+
+ip addr flush dev eth0
+ip addr add 10.0.2.15/24 dev eth0
+
+ip route del default 2>/dev/null
+ip route add default via 10.0.2.2 dev eth0
+echo "nameserver 1.1.1.1" > /etc/resolv.conf
+```
+
+为eth配置IP，使用`udhcpc`获取网关，DNS这里直接指定1.1.1.1，读者也可自行指定。最后使用`wget`命令来测试一下效果。运行下面的命令后，应该能打印出实际的网络访问情况。
+
+```bash
+wget https://www.baidu.com  -qO-
+```
+
+![image-20260524004629778](./assets/image-20260524004629778.png)
 
 ## 制作磁盘镜像
 
-
+下面章节未完待续
 
 ### 第一个可运行的完整Linux
 
