@@ -238,7 +238,7 @@ Executable file formats  --->
 
 在编写我们自己的 `init` 进程前，必须理解程序是如何运行的： 
 
-* **动态链接（Dynamic Linking）**：程序在编译时并不包含库（如 glibc）的代码，而是在运行时依赖系统中的 `.so` 动态链接库。这种方式能节省磁盘和内存，但要求系统里必须有一套完整的动态链接加载器和基础库。
+* **动态链接（Dynamic Linking）**：程序在编译时并不包含库（如 glibc）的代码，而是在运行时依赖系统中的 `.so` 动态链接库。这种方式能节省硬盘和内存，但要求系统里必须有一套完整的动态链接加载器和基础库。
 *  **静态链接（Static Linking）**：编译时把所有需要的库函数直接“打包”进最终的二进制文件中。生成的程序通常更大，但不依赖外部动态库和动态链接器，放到相同架构、兼容内核ABI的环境中就能运行。
 
 由于我们现在这台设备上除了内核，什么库都没有，所以必须使用静态链接的方式编译，否则会因为缺少动态库与装载器而无法运行。
@@ -250,7 +250,7 @@ mkdir -p _root
 cd _root
 ```
 
-```C
+```C [init.c]
 #include <stdbool.h>
 #include <unistd.h>
 #include <string.h>
@@ -308,7 +308,7 @@ jeffy:~/linux-7.0.8/_root$
 
 #### initramfs与cpio
 
-现在我们的精简内核没有任何文件，即使编译出了自己的`init`进程，也无法塞到内核里，所以，我们需要启动Linux内核的`initramfs`功能。`initramfs`本质上是一个cpio归档，内核会在启动早期将它解包到内存中的rootfs里，无需提供实际的磁盘镜像。
+现在我们的精简内核没有任何文件，即使编译出了自己的`init`进程，也无法塞到内核里，所以，我们需要启动Linux内核的`initramfs`功能。`initramfs`本质上是一个cpio归档，内核会在启动早期将它解包到内存中的rootfs里，无需提供实际的硬盘镜像。
 
 ```text
 General setup  --->
@@ -364,7 +364,7 @@ int strcmp(const char *s1, const char *s2) {
 C语言为了保持跨平台兼容性，并不会原生提供系统调用的关键字，而是使用C库包装，所以为了使用原始系统调用，我们需要一些汇编来编写系统调用的核心代码。不过C语言为我们提供了内联汇编的能力，我们可以使用内联汇编来完成核心的功能，剩下的周边功能可以继续使用C语言。
 
 
-```C
+```C [init.c]
 #include <stdint.h>
 
 #define STDIN 0
@@ -676,7 +676,7 @@ qemu-system-x86_64 -m 1G -initrd ../minilinux.cpio -kernel arch/x86/boot/bzImage
 
 顾名思义，**伪文件系统**就是长得像文件系统，但不是文件系统的东西。真实的文件系统要有存储设备和驱动并从该设备中获取目录树，然而伪文件系统则由内核直接提供目录树，无需外部设备参与。在Linux上，最核心的文件系统是下面几个。
 
-- `devtmpfs`：用于暴露内核管理的设备节点，终端、磁盘、网卡等设备通常都需要通过`/dev`下的节点访问。
+- `devtmpfs`：用于暴露内核管理的设备节点，终端、硬盘、网卡等设备通常都需要通过`/dev`下的节点访问。
 - `proc`：用于暴露进程信息和一部分内核运行时状态，`ps`、`top`等命令会依赖它读取进程列表。
 - `sysfs`：用于暴露内核设备模型、驱动、总线和内核对象，很多设备发现和配置工作都会依赖`/sys`。
 
@@ -797,7 +797,13 @@ ip route add default via 10.0.2.2 dev eth0
 echo "nameserver 1.1.1.1" > /etc/resolv.conf
 ```
 
-上面的`udhcpc`用于从QEMU的DHCP服务获取网络参数；由于我们还没有准备完整的DHCP脚本，这里又手动配置了一次IP、默认路由和DNS。DNS这里直接指定1.1.1.1，读者也可自行指定。最后使用`wget`命令来测试一下效果。运行下面的命令后，应该能打印出实际的网络访问情况。
+上面的`udhcpc`用于从QEMU的DHCP服务获取网络参数；由于我们还没有准备完整的DHCP脚本，这里我们选择手动配置IP、默认路由和DNS。DNS这里直接指定1.1.1.1，读者也可自行指定。最后使用`wget`命令来测试一下效果。运行下面的命令后，应该能打印出实际的网络访问情况。
+
+> [!tip]
+>
+> 公网DNS IP参考：阿里云：223.5.5.5；114DNS：114.114.114.114；Google：8.8.8.8
+
+
 
 ```bash
 wget https://www.baidu.com  -qO-
@@ -805,22 +811,250 @@ wget https://www.baidu.com  -qO-
 
 ![image-20260524004629778](./assets/image-20260524004629778.png)
 
-## 制作磁盘镜像
+## 制作硬盘镜像
 
-下面章节未完待续
+`initramfs`是工作在内存中的文件系统，实际使用时，自然不可能只靠内存来工作。相信读者也已发现，在之前的所有操作中，在新系统修改文件无法持久保存。本节先添加一块虚拟硬盘，把它作为数据盘挂载到系统中，用来验证文件持久化。至于把根文件系统整体迁移到硬盘，则留到下一节。
 
-### 第一个可运行的完整Linux
+### 配置驱动
 
+首先配置内核，让内核支持虚拟块设备与ext4文件系统。
 
+> [!tip]
+>
+> 一些较新的Linux发行版会使用btrfs文件系统，但本教程只是验证块设备和文件持久化，btrfs并不会带来明显优势，配置项和排错复杂度反而更高。因此这里选择更常见、更简单的ext4。
 
-#### 单根与多根
+```
+[*] Enable the block layer  --->
 
+File systems  --->
+	[*] The Extended 4 (ext4) filesystem
+Device Drivers  --->
+	[*] PCI support  --->
+	[*] Virtio drivers  --->
+		[*]   PCI driver for virtio devices
+	[*] Block devices  --->
+		[*]   Virtio block driver
+```
 
+如果前面已经完成过网络配置，PCI与Virtio PCI驱动通常已经启用；如果跳过了网络章节，这里需要一并确认。
 
+### 创建并使用虚拟硬盘
 
+使用`qemu-img`创建一个虚拟硬盘文件。`qemu-img`通常来自`qemu-utils`，`mkfs.ext4`通常来自`e2fsprogs`；如果命令不存在，可以先安装依赖。
 
-### 复用包管理器
+```bash
+sudo apt install qemu-utils e2fsprogs -y
+# 创建一个1G的虚拟硬盘
+qemu-img create -f raw disk.img 1G
+# 格式化为ext4文件系统
+mkfs.ext4 disk.img
+```
 
+可以使用`file disk.img`查看虚拟硬盘是否成功格式化。
 
+![image-20260524132120889](./assets/image-20260524132120889.png)
 
-## 内核自举
+使用下面的命令运行qemu模拟器。
+
+```bash
+qemu-system-x86_64 -m 1G \
+    -initrd ../minilinux.cpio \
+    -kernel arch/x86/boot/bzImage \
+    -append  "console=ttyS0 rdinit=/sbin/init" \
+    -nographic \
+    -netdev user,id=net0 \
+    -device virtio-net-pci,netdev=net0 \
+    -drive file=disk.img,format=raw,if=virtio
+```
+
+简单解释一下新增的部分。
+
+- `-append`内的`rdinit=/sbin/init`，用于明确指定initramfs中的第一个用户态进程。这里的硬盘只作为后续手动挂载的数据盘使用，根文件系统仍然来自initramfs。
+- `-drive file=disk.img,format=raw,if=virtio` 使用disk.img作为硬盘文件，格式为纯硬盘内容，使用virtio接口暴露给虚拟机。
+
+```bash
+mkdir /mnt 
+mount -t ext4 /dev/vda /mnt
+echo "Hello, ram file!" > /ramFile.txt
+echo "Hello, disk file!" > /mnt/diskFile.txt
+```
+
+使用`reboot`重启设备。
+
+> [!warning]
+>
+> 不要使用Ctrl+A, X 直接终止虚拟机，刚写入的文件大概率还在页缓存中没有落盘，直接终止虚拟机，写入的数据可能丢失或损坏。如果想通过这种方式关机重启，可以先通过`umount /mnt`拆卸挂载，让内核将页缓存写回硬盘。
+
+```bash
+mkdir /mnt
+mount -t ext4 /dev/vda /mnt
+cat /ramFile.txt   # 报错，因为内存中的文件已经没有了
+cat /mnt/diskFile.txt
+```
+
+![image-20260524135452358](./assets/image-20260524135452358.png)
+
+## 将内核迁移至硬盘
+
+现在我们有了一个持久化的硬盘，接下来要做的就是将内核与用户态程序都迁移到硬盘中，实现从硬盘中启动设备。目前，我们用qemu的`-kernel`参数直接指定了要启动的内核，接下来，我们要通过x86约定从磁盘中直接启动内核。
+
+计算机术语中，boot一词来源于bootstrap，取自短语“Pull oneself over a fence by one’s bootstraps.”即“靠拽自己鞋带把自己拽起来翻过围栏”。程序需要环境来运行，环境需要程序来配置，而系统启动，则是完成这个自举过程的第一步：先用极少的代码建立最小运行环境，再一步步加载更复杂的程序。
+
+> [!note]
+>
+> X86启动约定和本文理解Linux的主旨关系不大，但作为完整启动的一环不得不简单看一下。有些地方不会写得太详细，旨在不求甚解；但仍会在关键点留下一两句解释，以便读者自行查阅资料或询问AI。
+
+### BIOS与EFI
+
+在qemu中，默认是使用BIOS启动设备的。在现代设备中，默认的启动方式已经换成了UEFI。我们会分别看两种启动方式，并简要说明为什么UEFI成为了新设备的启动范式。
+
+BIOS的启动方式非常简单：读取启动扇区，运行启动扇区中的引导代码，引导代码再加载操作系统，并最终把控制权交给操作系统。而这段引导代码通常就是bootloader。在这里我们会手搓一个简易的bootloader，并通过它看到完整的Linux启动过程。BIOS通常会和MBR分区表一起出现，所以我们先向创建的磁盘写入一个MBR分区表。
+
+> [!note]
+>
+> 编写X86的bootloader其实很烦人，由于X86历史包袱重，CPU同时存在16位实模式、32位平坦模式、32位保护模式和64位长模式。而历史包袱少的ARM64，则一上电就是64位模式。bootloader要工作在16位实模式中，写C语言都不好写。
+
+### 重新格式化硬盘
+
+我们为磁盘写入MBR分区表，并创建两个分区：一个FAT32分区用于存放Linux内核与initramfs，另一个ext4分区用于存放实际的数据文件。后面编写bootloader时，我们会让它具备读取基础FAT32目录和文件内容的能力；这里先把分区布局准备好。
+
+```bash
+# 安装分区/文件系统工具
+sudo apt install parted dosfstools e2fsprogs
+# 清掉旧签名/分区表
+wipefs --force -a disk.img
+# 创建 MBR 分区表
+parted disk.img --script \
+  mklabel msdos \
+  mkpart primary fat32 1MiB 257MiB \
+  mkpart primary ext4 257MiB 100% \
+  set 1 boot on
+LOOP=$(sudo losetup -Pf --show disk.img)
+echo $LOOP
+sudo mkfs.fat -F 32 "${LOOP}p1"
+sudo mkfs.ext4 "${LOOP}p2"
+mkdir boot_partition
+sudo mount -t vfat "${LOOP}p1" boot_partition
+sudo cp arch/x86/boot/bzImage boot_partition/vmlinuz
+sudo umount boot_partition
+rm -rf boot_partition
+sudo losetup -d "${LOOP}"
+
+```
+
+![image-20260524152102605](./assets/image-20260524152102605.png)
+
+现在磁盘已经格式化好，我们先去编写一个最简单的bootloader。
+
+### 编写bootloader
+
+我这个人不太喜欢写纯汇编，宁可内联一大坨也不想写纯汇编。所以这次的bootloader还是用C写。我们先写一个最简单的打印字符的bootloader，看看该怎么写。在Linux的目录下直接创建一个`boot.c`。
+
+```C [boot.c]
+#define putchar putchar_int10h
+    /*
+     * BIOS teletype output:
+     * AH = 0x0e
+     * AL = character
+     */
+#define putchar_int10h(c) do { \
+    __asm__ volatile (         \
+        "movb $0x0e, %%ah\n\t" \
+        "int $0x10\n\t"        \
+        :                      \
+        : "a"(c)               \
+        : "memory"             \
+    );                         \
+} while(0)
+
+__attribute__((noreturn))
+void _start() {
+    __asm__ volatile (
+        "cli\n\t" // 关中断
+        "xor %%ax, %%ax\n\t"
+        // 清空基址寄存器们
+        "mov %%ax, %%ds\n\t"
+        "mov %%ax, %%es\n\t"
+        "mov %%ax, %%fs\n\t"
+        "mov %%ax, %%gs\n\t"
+        "sti\n\t" // 开中断
+        :
+        :
+        : "ax", "memory"
+    );
+    for (char x = 'a'; x <= 'z'; x++) {
+        putchar(x);
+    }
+    putchar('\r');
+    putchar('\n');
+    for (char x = 'A'; x <= 'Z'; x++) {
+        putchar(x);
+    }
+    putchar('\r');
+    putchar('\n');
+    for (char x = '0'; x <= '9'; x++) {
+        putchar(x);
+    }
+    putchar('\r');
+    putchar('\n');
+    while(1) {
+        __asm__ volatile ("hlt");
+    }
+}
+
+```
+
+使用下面的命令编译为一个纯二进制文件。
+
+```bash
+gcc -m16 -march=i386 \
+    -fno-pie \
+    -fno-pic \
+    -fno-builtin \
+    -fno-unwind-tables \
+    -fno-asynchronous-unwind-tables \
+    -nostdlib \
+    -Ttext=0x7c00 \
+    -Os \
+    -Wl,-e,_start \
+    -Wl,--oformat=binary \
+    boot.c -o boot.bin
+
+# 确保这个文件要小于512字节
+ls -l boot.bin
+# 如果超过510字节，不能直接截断，需要先缩小代码体积
+test $(stat -c%s boot.bin) -le 510
+# 不足510字节时补零到 510 字节
+truncate -s 510 boot.bin
+# 写入 BIOS boot sector 签名 0x55 0xaa
+printf '\x55\xaa' >> boot.bin
+```
+
+> [!note]
+>
+> bootloader运行在16位设备中，所以要加`-m16`编译选项。我们希望编译产物尽可能小，所以加入`-Os`优化选项。
+>
+> 默认情况下，链接器会输出ELF文件，这里使用`--oformat=binary`让其输出原始二进制。
+>
+> BIOS会默认将代码段加载到0x7c00，需要在编译时显式指定代码将会被放在这里。
+>
+> 和上面的使用原始系统调用一样，一切由库提供的功能都不能使用。并且千万别搞位置无关，这里位置相关，一定要加`-fno-pic -fno-pie`。
+>
+> 使用GCC生成16位boot sector本身是偏实验性的写法，后续代码变复杂后尤其要关注生成的指令、段布局和最终大小。严肃的bootloader通常会使用汇编，或至少配合更完整的linker script控制布局。
+
+开机试一下。
+
+```bash
+qemu-system-x86_64 -drive file=boot.bin,format=raw,if=floppy
+```
+
+> [!tip]
+>
+> `if=floppy`表示其为软盘接口。
+
+![image-20260524165018278](./assets/image-20260524165018278.png)
+
+### 虚拟硬盘分区
+
+### 移除initramfs
+
