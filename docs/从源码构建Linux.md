@@ -951,37 +951,24 @@ sudo losetup -d "${LOOP}"
 我这个人不太喜欢写纯汇编，宁可内联一大坨也不想写纯汇编。所以这次的bootloader还是用C写。我们先写一个最简单的打印字符的bootloader，看看该怎么写。在Linux的目录下直接创建一个`boot.c`。
 
 ```C [boot.c]
-#define putchar putchar_int10h
-    /*
-     * BIOS teletype output:
-     * AH = 0x0e
-     * AL = character
-     */
-#define putchar_int10h(c) do { \
-    __asm__ volatile (         \
-        "movb $0x0e, %%ah\n\t" \
-        "int $0x10\n\t"        \
-        :                      \
-        : "a"(c)               \
-        : "memory"             \
-    );                         \
-} while(0)
+/*
+    * BIOS teletype output:
+    * AH = 0x0e
+    * AL = character
+*/
+#define putchar(c) do {                                \
+    unsigned short ax = 0x0e00 | ((unsigned char)(c)); \
+    unsigned short bx = 0x0000;                        \
+    __asm__ volatile (                                 \
+        "int $0x10"                                    \
+        : "+a"(ax), "+b"(bx)                           \
+        :                                              \
+        : "memory"                                     \
+    );                                                 \
+} while (0)
 
 __attribute__((noreturn))
-void _start() {
-    __asm__ volatile (
-        "cli\n\t" // 关中断
-        "xor %%ax, %%ax\n\t"
-        // 清空基址寄存器们
-        "mov %%ax, %%ds\n\t"
-        "mov %%ax, %%es\n\t"
-        "mov %%ax, %%fs\n\t"
-        "mov %%ax, %%gs\n\t"
-        "sti\n\t" // 开中断
-        :
-        :
-        : "ax", "memory"
-    );
+void boot_main() {
     for (char x = 'a'; x <= 'z'; x++) {
         putchar(x);
     }
@@ -1001,7 +988,20 @@ void _start() {
         __asm__ volatile ("hlt");
     }
 }
-
+__asm__ (
+".code16gcc\n"
+".global _start\n"
+"_start:"
+    "cli\n\t" // 关中断
+    "xor %ax, %ax\n\t"
+    // 清空基址寄存器们
+    "mov %ax, %ds\n\t"
+    "mov %ax, %es\n\t"
+    "mov %ax, %fs\n\t"
+    "mov %ax, %gs\n\t"
+    "sti\n\t" // 开中断
+    "call boot_main\n\t"
+);
 ```
 
 使用下面的命令编译为一个纯二进制文件。
@@ -1041,20 +1041,20 @@ printf '\x55\xaa' >> boot.bin
 > 和上面的使用原始系统调用一样，一切由库提供的功能都不能使用。并且千万别搞位置无关，这里位置相关，一定要加`-fno-pic -fno-pie`。
 >
 > 使用GCC生成16位boot sector本身是偏实验性的写法，后续代码变复杂后尤其要关注生成的指令、段布局和最终大小。严肃的bootloader通常会使用汇编，或至少配合更完整的linker script控制布局。
+>
+> 纯C文件做精细控制真的不好做，实际的bootloader将会采用 C + 汇编+链接器脚本的方式。
 
 开机试一下。
 
 ```bash
-qemu-system-x86_64 -drive file=boot.bin,format=raw,if=floppy
+qemu-system-x86_64 -drive file=boot.bin,format=raw
 ```
 
-> [!tip]
->
-> `if=floppy`表示其为软盘接口。
 
-![image-20260524165018278](./assets/image-20260524165018278.png)
 
-### 虚拟硬盘分区
+![](./assets/image-20260524233923300.png)
+
+### 从镜像引导Linux
 
 ### 移除initramfs
 
