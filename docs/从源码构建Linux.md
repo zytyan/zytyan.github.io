@@ -933,10 +933,13 @@ LOOP=$(sudo losetup -Pf --show disk.img)
 echo $LOOP
 sudo mkfs.fat -F 32 "${LOOP}p1"
 sudo mkfs.ext4 "${LOOP}p2"
-mkdir boot_partition
+mkdir -p boot_partition root_partition
 sudo mount -t vfat "${LOOP}p1" boot_partition
+sudo mount -t ext4 "${LOOP}p2" root_partition
 sudo cp arch/x86/boot/bzImage boot_partition/vmlinuz
-sudo umount boot_partition
+sudo cp _root/init root_partition
+ls boot_partition/ root_partition/
+sudo umount boot_partition root_partition
 rm -rf boot_partition
 sudo losetup -d "${LOOP}"
 
