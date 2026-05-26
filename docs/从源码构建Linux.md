@@ -953,7 +953,7 @@ sudo losetup -d "${LOOP}"
 
 原来这里是以C语言内联汇编写一个boot.c的（读者可以在git历史看到曾经这里的C语言代码），然而我发现几乎全是内联汇编，C语言只写了最基本的两个控制流，最后发现不如手搓一点汇编。
 
-```asn [boot.S]
+```asm [boot.S]
 .code16
 .section .text
 
@@ -1011,7 +1011,7 @@ gcc boot.S -m16 -c -o \
 
 > [!note]
 >
-> bootloader运行在16位设备中，所以要加`-m16`编译选项。我们希望编译产物尽可能小，所以加入`-Os`优化选项。
+> bootloader运行在16位设备中，所以要加`-m16`编译选项。
 >
 > 默认情况下，链接器会输出ELF文件，这里使用`--oformat binary`让其输出原始二进制。
 >
@@ -1026,7 +1026,21 @@ gcc boot.S -m16 -c -o \
 qemu-system-x86_64 -drive file=boot.bin,format=raw -debugcon stdio
 ```
 
+![image-20260526213134574](./assets/image-20260526213134574.png)
+
+
+
 ### 从镜像引导Linux
+
+要想能引导Linux，就需要先从磁盘中读取镜像。本章中，我们通过BIOS终端读取硬盘，并通过解析最基本的FAT分区来获取Linux本体。
+
+**未完待续**
+
+#### 制作可读取硬盘的bootloader
+
+#### 读取FAT文件系统
+
+#### 引导Linux
 
 ### 移除initramfs
 
