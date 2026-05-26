@@ -951,111 +951,80 @@ sudo losetup -d "${LOOP}"
 
 ### 编写bootloader
 
-我这个人不太喜欢写纯汇编，宁可内联一大坨也不想写纯汇编。所以这次的bootloader还是用C写。我们先写一个最简单的打印字符的bootloader，看看该怎么写。在Linux的目录下直接创建一个`boot.c`。
+原来这里是以C语言内联汇编写一个boot.c的（读者可以在git历史看到曾经这里的C语言代码），然而我发现几乎全是内联汇编，C语言只写了最基本的两个控制流，最后发现不如手搓一点汇编。
 
-```C [boot.c]
-/*
-    * BIOS teletype output:
-    * AH = 0x0e
-    * AL = character
-*/
-#define putchar(c) do {                                \
-    unsigned short ax = 0x0e00 | ((unsigned char)(c)); \
-    unsigned short bx = 0x0000;                        \
-    __asm__ volatile (                                 \
-        "int $0x10"                                    \
-        : "+a"(ax), "+b"(bx)                           \
-        :                                              \
-        : "memory"                                     \
-    );                                                 \
-} while (0)
+```asn [boot.S]
+.code16
+.section .text
 
-__attribute__((noreturn))
-void boot_main() {
-    for (char x = 'a'; x <= 'z'; x++) {
-        putchar(x);
-    }
-    putchar('\r');
-    putchar('\n');
-    for (char x = 'A'; x <= 'Z'; x++) {
-        putchar(x);
-    }
-    putchar('\r');
-    putchar('\n');
-    for (char x = '0'; x <= '9'; x++) {
-        putchar(x);
-    }
-    putchar('\r');
-    putchar('\n');
-    while(1) {
-        __asm__ volatile ("hlt");
-    }
-}
-__asm__ (
-".code16gcc\n"
-".global _start\n"
-"_start:"
-    "cli\n\t" // 关中断
-    "xor %ax, %ax\n\t"
-    // 清空基址寄存器们
-    "mov %ax, %ds\n\t"
-    "mov %ax, %es\n\t"
-    "mov %ax, %fs\n\t"
-    "mov %ax, %gs\n\t"
-    "sti\n\t" // 开中断
-    "call boot_main\n\t"
-);
+.global _start
+
+_start:
+  cli  /* 关闭中断，防止BIOS中断打断代码 */
+  xorw %AX, %AX
+  movw %AX, %DS   /* 清空DS基址寄存器 */
+  sti
+  movw $string, %AX
+  call puts16
+  cli
+  hlt
+
+
+puts16:
+  pushw %BX
+  pushw %SI
+  movw %AX, %SI
+  movb $0x07, %BL
+pubs16_start_putc:
+  movb (%SI), %AL
+  testb %AL, %AL
+  jz puts16_end
+#ifndef NON_QEMU_DEBUG
+  outb %AL, $0xE9 /* 向QEMU的调试控制台输出 */
+#endif
+  movb $0x0E, %AH
+  int $0x10
+  inc %SI
+  jmp pubs16_start_putc
+puts16_end:
+  popw %SI
+  popw %BX
+  ret
+
+string:
+  .asciz "ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890+-\r\n"
+
+.org 510
+.word 0xAA55
 ```
 
 使用下面的命令编译为一个纯二进制文件。
 
 ```bash
-gcc -m16 -march=i386 \
-    -fno-pie \
-    -fno-pic \
-    -fno-builtin \
-    -fno-unwind-tables \
-    -fno-asynchronous-unwind-tables \
-    -nostdlib \
-    -Ttext=0x7c00 \
-    -Os \
-    -Wl,-e,_start \
-    -Wl,--oformat=binary \
-    boot.c -o boot.bin
-
-# 确保这个文件要小于512字节
-ls -l boot.bin
-# 如果超过510字节，不能直接截断，需要先缩小代码体积
-test $(stat -c%s boot.bin) -le 510
-# 不足510字节时补零到 510 字节
-truncate -s 510 boot.bin
-# 写入 BIOS boot sector 签名 0x55 0xaa
-printf '\x55\xaa' >> boot.bin
+gcc boot.S -m16 -c -o \
+    boot.o && \
+    ld -m elf_i386 \
+    -Ttext 0x7c00 \
+    --oformat binary boot.o \
+    -o boot.bin
 ```
 
 > [!note]
 >
 > bootloader运行在16位设备中，所以要加`-m16`编译选项。我们希望编译产物尽可能小，所以加入`-Os`优化选项。
 >
-> 默认情况下，链接器会输出ELF文件，这里使用`--oformat=binary`让其输出原始二进制。
+> 默认情况下，链接器会输出ELF文件，这里使用`--oformat binary`让其输出原始二进制。
 >
-> BIOS会默认将代码段加载到0x7c00，需要在编译时显式指定代码将会被放在这里。
+> BIOS会默认将代码段加载到0x7c00，需要在编译时显式指定代码将会被放在这里。此时链接器会假设text段会被加载到0x7c00，并基于此进行链接。
 >
-> 和上面的使用原始系统调用一样，一切由库提供的功能都不能使用。并且千万别搞位置无关，这里位置相关，一定要加`-fno-pic -fno-pie`。
->
-> 使用GCC生成16位boot sector本身是偏实验性的写法，后续代码变复杂后尤其要关注生成的指令、段布局和最终大小。严肃的bootloader通常会使用汇编，或至少配合更完整的linker script控制布局。
->
-> 纯C文件做精细控制真的不好做，实际的bootloader将会采用 C + 汇编+链接器脚本的方式。
+> 和上面的使用原始系统调用一样，一切由库提供的功能都不能使用。
+
 
 开机试一下。
 
 ```bash
-qemu-system-x86_64 -drive file=boot.bin,format=raw
+qemu-system-x86_64 -drive file=boot.bin,format=raw -debugcon stdio
 ```
-
-
-
-![](./assets/image-20260524233923300.png)
 
 ### 从镜像引导Linux
 
