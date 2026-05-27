@@ -232,7 +232,7 @@ Executable file formats  --->
 
 > [!tip]
 >
-> 虽然ELF是Linux世界的标准格式，但是Linux内核并不必须要求能解析ELF文件，也存在一些比ELF更简单的文件格式。
+> 虽然ELF是Linux世界的标准格式，但是Linux内核并不必须要求能解析ELF文件，也存在一些比ELF更简单的文件格式。本文最后大家会看到计算机是怎么执行非ELF格式的原始二进制文件的。
 
 #### 动态链接与静态链接
 
@@ -1033,6 +1033,282 @@ qemu-system-x86_64 -drive file=boot.bin,format=raw -debugcon stdio
 ### 从镜像引导Linux
 
 要想能引导Linux，就需要先从磁盘中读取镜像。本章中，我们通过BIOS终端读取硬盘，并通过解析最基本的FAT分区来获取Linux本体。
+::: code-group
+```asm [stage1.S]
+.code16
+.section .text, "ax", @progbits
+
+.global _start
+.global read_disk_lba_16
+.global puts16
+.global debug_puts
+
+_start:
+  cli  /* 关闭中断，防止BIOS中断打断代码 */
+  xorw %ax, %ax
+  movw %ax, %ds   /* 清空DS基址寄存器 */
+  movw %ax, %es   /* 清空ES基址寄存器 */
+  movw %ax, %ss
+  movw $0x7C00, %SP /* 设置栈顶，避免覆盖代码 */
+  movb %DL, boot_driver_id /* 保存启动时的驱动器号 */
+  sti
+  call load_next_code
+  movw $info_into_32_flat_mode, %AX
+  call puts16
+  call into_32_flat_mode
+
+load_next_code:
+  /* 从磁盘加载所有代码，我们假设读8KB */
+  /* 开一块栈空间存储DAP结构体 */
+  pushw %BP
+  pushw %ds
+  pushw %es
+  movw %SP, %BP
+  andw $0xFFF0, %SP  /* 16字节对齐 */
+  subw $16, %SP
+  movw %sp, %si  /* DAP结构体地址放在SI寄存器中 */
+  /* 设置DAP结构体 */
+  movb $0x10, (%si)       /* DAP size */
+  movb $0, 1(%si)      /* reserved */
+  movw $2, 2(%si)     /* TODO: 读取扇区数量应该从read_sector_count中获取，但这取决于后处理 */
+  movw $(0x7C00+512), 4(%si) /* offset: 0x7C00 + 512 */
+  movw $0, 6(%si) /* segment: 0x0000 */
+  movl $1, 8(%si) /* lba: 1 */
+  movl $0, 12(%si) /* lba高32位 */
+  movb boot_driver_id, %dl /* 驱动器号放在DL寄存器中 */
+  call read_disk_lba_16
+  jc .Ldisk_read_error
+  movw %bp, %sp
+  popw %es
+  popw %ds
+  popw %bp
+  movw $info_load_success, %AX
+  call puts16
+  ret
+.Ldisk_read_error:
+  movw $info_disk_read_error, %AX
+  call panic
+
+puts16:
+  pushw %BX
+  pushw %SI
+  movw %AX, %SI
+  movb $0x07, %BL
+.Lpubs16_start_putc:
+  movb (%SI), %AL
+  testb %AL, %AL
+  jz .Lputs16_end
+#ifndef NON_QEMU_DEBUG
+  outb %AL, $0xE9 /* 向QEMU的调试控制台输出 */
+#endif
+  movb $0x0E, %AH
+  int $0x10
+  inc %SI
+  jmp .Lpubs16_start_putc
+.Lputs16_end:
+  popw %SI
+  popw %BX
+  ret
+
+panic:
+    testw %AX, %AX
+    jz .Lpanic_halt
+    call puts16
+    cli
+.Lpanic_halt:
+    hlt
+    jmp .Lpanic_halt
+
+read_disk_lba_16:
+    /* 用BIOS的LBA读硬盘
+        调用约定： 驱动器号:DL, DAP地址: DS:SI
+            - 成功： CF=0, AX=0
+            - 失败： CF=1, AX=错误码
+
+        struct DAP {
+            uint8_t  size;       // 0x10
+            uint8_t  reserved;   // 0
+            uint16_t count;      // 要读的扇区数
+            uint16_t offset;     // 目标 offset
+            uint16_t segment;    // 目标 segment
+            uint64_t lba;        // 起始 LBA
+        };
+    */
+    movb $0x42, %AH  /* BIOS 扩展磁盘服务 - 读扇区 */
+    int $0x13
+    ret
+
+info_into_32_flat_mode:
+  .asciz "Prepare to enter 32-bit protected mode\r\n"
+info_a20_enable:
+  .asciz "Enabling A20 line...\r\n"
+info_disk_read_error:
+  .asciz "Disk read error! Halting.\r\n"
+info_load_success:
+  .asciz "Disk read successful! Jumping to protected mode...\r\n"
+boot_driver_id:
+  .byte 0x00 /* 从启动时的寄存器中获取驱动器号 */
+
+
+into_32_flat_mode:
+  /* 关中断 */
+  cli
+  /* 开启 A20 总线 (使用 Fast A20 端口 0x92) */
+  inb     $0x92, %al
+  orb     $2, %al
+  outb    %al, $0x92
+  movw $info_a20_enable, %AX
+  call puts16
+  /* 加载GDT */
+  lgdt gdt_pointer
+  /* 开启保护模式 */
+  movl    %cr0, %eax
+  orl     $1, %eax
+  movl    %eax, %cr0
+  /* 远跳转，刷新CS寄存器 */
+  ljmpl $0x08, $protected_mode_asm_entry
+
+.org 442
+read_sector_count:
+.word 0
+
+.org 510
+.word 0xAA55
+
+/* stage2 */
+.code32
+debug_puts:
+  movl 0x4(%esp), %ecx
+.Ldebug_puts_start_putc:
+  movb (%ecx), %al
+  testb %al, %al
+  jz .Ldebug_puts_end
+  outb %al, $0xE9 /* 向QEMU的调试控制台输出 */
+  inc %ecx
+  jmp .Ldebug_puts_start_putc
+.Ldebug_puts_end:
+  ret
+
+protected_mode_asm_entry:
+  /* 现在已经进入保护模式了，设置段寄存器 */
+  movw $0x10, %ax  /* 数据段选择子 (GDT 中的第二个描述符) */
+  movw %ax, %ds
+  movw %ax, %es
+  movw %ax, %fs
+  movw %ax, %gs
+  movw %ax, %ss
+  movl $0x200000, %esp /* 设置栈顶，避免覆盖代码 */
+  pushl $info_setup_segments
+  call debug_puts
+  popl %ecx
+  /* 跳转到 C 语言入口点，注意：现在还不能开中断 */
+  pushl $info_into_C_entry
+  call debug_puts
+  popl %ecx
+
+  cld
+  call protected_mode_C_entry
+  cli
+.Lhang:
+  hlt
+  jmp .Lhang
+.p2align 3                      # 8 字节对齐
+gdt_start:
+    # 空描述符 (8字节全0)
+    .quad 0x0
+
+    # 代码段描述符 (基址: 0x0, 界限: 0xfffff, 粒度: 4KB, 32位保护模式)
+    # AT&T 拆开写比较直观：.word (2字节), .byte (1字节)
+    .word 0xffff                # Limit (0-15)
+    .word 0x0                   # Base (0-15)
+    .byte 0x0                   # Base (16-23)
+    .byte 0x9a                  # Access byte (呈现, 特权级0, 代码段, 可读/执行)
+    .byte 0xcf                  # Flags (粒度4KB, 32位) + Limit (16-19)
+    .byte 0x0                   # Base (24-31)
+
+    # 数据段描述符 (基址: 0x0, 界限: 0xfffff, 粒度: 4KB, 32位保护模式)
+    .word 0xffff                # Limit (0-15)
+    .word 0x0                   # Base (0-15)
+    .byte 0x0                   # Base (16-23)
+    .byte 0x92                  # Access byte (呈现, 特权级0, 数据段, 可读/写)
+    .byte 0xcf                  # Flags + Limit (16-19)
+    .byte 0x0                   # Base (24-31)
+gdt_end:
+
+info_setup_segments:
+  .asciz "Setting up GDT and entering protected mode...\r\n"
+info_into_C_entry:
+  .asciz "Jumping to C entry point in protected mode...\r\n"
+
+# GDT 描述符指针 (传递给 lgdt)
+gdt_pointer:
+    .word gdt_end - gdt_start - 1 # GDT 界限 (大小 - 1)
+    .long gdt_start               # GDT 32位线性基地址
+```
+
+```C [lib.h]
+#ifndef LIB_H
+#define LIB_H
+
+typedef long intptr_t;
+
+
+void memcpy(void *dest, const void *src, intptr_t n);
+void strcpy(char *dest, const char *src);
+int strcmp(const char *s1, const char *s2);
+void debug_puts(const char *str);
+
+#endif // LIB_H
+```
+
+```C [lib.c]
+#include "lib.h"
+
+void memcpy(void *dest, const void *src, intptr_t n)
+{
+        for (intptr_t i = 0; i < n; i++) {
+                ((char *)dest)[i] = ((const char *)src)[i];
+        }
+}
+
+void strcpy(char *dest, const char *src)
+{
+        while (*src) {
+                *dest++ = *src++;
+        }
+        *dest = '\0'; // Null-terminate the destination string
+}
+
+int strcmp(const char *s1, const char *s2)
+{
+        while (*s1 && (*s1 == *s2)) {
+                s1++;
+                s2++;
+        }
+        return *(const unsigned char *)s1 - *(const unsigned char *)s2;
+}
+```
+
+```C [main.c]
+#include "lib.h"
+
+volatile unsigned short *vram = (unsigned short *)0x000B8000;
+
+void protected_mode_C_entry() {
+  const char *show_string = "Hello, protected mode vram!";
+  int i = 0;
+  while (show_string[i]) {
+    vram[i] = (0x0c << 8) | show_string[i];
+    i++;
+  }
+  debug_puts("Hello, protected mode!\n");
+  while (1) {
+    __asm__ volatile("cli");
+    __asm__ volatile("hlt");
+  }
+}
+```
+:::
 
 **未完待续**
 
