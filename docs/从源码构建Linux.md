@@ -932,15 +932,17 @@ parted disk.img --script \
 LOOP=$(sudo losetup -Pf --show disk.img)
 echo $LOOP
 sudo mkfs.fat -F 32 "${LOOP}p1"
-sudo mkfs.ext4 "${LOOP}p2"
+sudo mkfs.ext4 -F "${LOOP}p2"
 mkdir -p boot_partition root_partition
 sudo mount -t vfat "${LOOP}p1" boot_partition
 sudo mount -t ext4 "${LOOP}p2" root_partition
 sudo cp arch/x86/boot/bzImage boot_partition/vmlinuz
-sudo cp _root/init root_partition
+# 这里的配置是我们接下来自己写的bootloader会加载的配置文件，现在还用不上。
+echo -e 'kernel=/vmlinuz\ncmdline=root=/dev/vda2 rw console=ttyS0' | sudo tee boot_partition/BOOT.CFG
+sudo cp -r -- ~/glibc-2.43/build/stage/* root_partition/
 ls boot_partition/ root_partition/
 sudo umount boot_partition root_partition
-rm -rf boot_partition
+rm -rf boot_partition root_partition
 sudo losetup -d "${LOOP}"
 
 ```
@@ -1032,7 +1034,7 @@ qemu-system-x86_64 -drive file=boot.bin,format=raw -debugcon stdio
 
 ### 从镜像引导Linux
 
-要想能引导Linux，就需要先从磁盘中读取镜像。本章中，我们通过BIOS终端读取硬盘，并通过解析最基本的FAT分区来获取Linux本体。
+要想能引导Linux，就需要先从磁盘中读取镜像。本章中，我们通过BIOS终端读取硬盘，并通过解析最基本的FAT分区来获取Linux本体。在这里我们先写一个最小的可进入32位系统的一套代码。
 
 ::: code-group
 ```asm [stage1.S]
@@ -1310,7 +1312,7 @@ void protected_mode_C_entry() {
 }
 ```
 
-```ld [boot.ld]
+```ldscript [boot.ld]
 ENTRY(_start)
 
 SECTIONS
@@ -1341,7 +1343,7 @@ SECTIONS
 }
 ```
 
-```bash [buil.sh]
+```bash [build.sh]
 #!/usr/bin/env bash
 set -e
 
@@ -1422,14 +1424,85 @@ esac
 
 此时已经有了一个从16位实模式到32位保护模式的完整入口，且该保护模式为平坦模式，可以直接访问全部4GB物理内存。
 
+不得不说写一个支持文件系统访问的BootLoader还是非常复杂的，这里一个文章放不下，我将会在下方提供打包好的源码下载。
 
-**未完待续**
+#### FAT32文件系统
 
-#### 制作可读取硬盘的bootloader
+如果是两年前我写这篇文章，肯定就用将操作系统刷写到特定扇区的方式来做教学，毕竟即使再简单的文件系统，也需要研究个一周左右才能写出一个基本的没有问题的驱动，但现在时代变了，AI的出现让这种体力活变得轻松了许多，所以我用codex vibe了一个FAT32的只读驱动。编写这个文件系统驱动的目的非常简单：我希望大家能理解操作系统内核就是一段普通数据，它既可以放在硬盘的指定位置中固定读取，也可以以一个文件的形式让可以理解文件系统的BootLoader去加载。BootLoader提供的功能越多，启动的灵活性就越高。目前Linux世界中最通用的GRUB引导器，可以识别绝大多数常用系统，并通过文本格式的配置来决定如何引导操作系统。
 
-#### 读取FAT文件系统
+这个小型的FAT32驱动，会寻找启动盘下的第一个FAT32分区，并读取根目录下的`/boot.cfg`文件，若读取成功，则会解析文件中的Linux内核位置和启动参数。随后进入引导Linux环节。
+
+![image-20260527233754057](./assets/image-20260527233754057.png)
 
 #### 引导Linux
 
-### 移除initramfs
+相信大家经过上面的流程也认识到了，在裸机编程中，平时大多数的编程常识都是不存在的，比如访问空指针会段错误、内存要先分配再使用，使用后要释放等等。在裸机中，没有操作系统或库帮你管理设备，限制权限，只有开机初期的固件中能提供基础的驱动支持，你可以向任何位置写入任何数据，当然，写坏了也会导致死循环或CPU重置。这时，比起普通编程时的**规则**，实际在裸机生效的主要是**约定**。
 
+引导Linux并不能像普通程序一样在shell里启动，在外部直接传入几个参数，BootLoader必须要按照特定的格式在特定的位置放置特定的内容。
+
+> [!tip]
+>
+> 当然，Windows、Mac也都有它们自己的约定，不过和用户态周边类似，Windows、Mac的引导程序也是系统的一部分，所以我们很难假设它有稳定的接口，但Linux的启动约定则是公开且相对稳定的。
+
+X86下的Linux启动约定分为两部分：一部分为16位实模式下的启动约定，另一部分则是32位保护模式下的启动约定。我们这里只介绍保护模式的启动约定。
+
+##### 寄存器状态
+
+- `CS`：必须是一个 **32位执行代码段**，基地址（Base）为 `0x00000000`，限长（Limit）为 `4G` (0xFFFFFFFF)。
+- `DS`, `ES`, `SS`：必须是 **32位数据段**，基地址为 `0x00000000`，限长为 `4G`。
+- `FS`, `GS`：通常也设为与 `DS` 相同的数据段，或者清零。
+- `EFLAGS`：`IF` 位必须为 0（禁用中断）。`VM` 位必须为 0（禁止虚拟86模式）。
+- `ESI`：必须存放指向 `boot_params` 结构体（也叫 Setup Header 或 Zero Page）的物理绝对地址。
+- `ESP`：应该指向一个足够大的、有效的临时堆栈区域。
+
+##### 内存与分页
+
+- `CR0`：`PE` 位（Protected Mode Enable）必须置 1。`PG` 位（Paging）必须置 0（关闭分页，此时处于物理地址直接映射状态）。
+- GDT（全局描述符表）：Bootloader 必须设置一个临时的 GDT，以满足上述 `CS/DS` 的段选择子要求。
+
+无论是实模式还是保护模式引导，Bootloader 传递给内核最核心的资产就是 `boot_params` 结构体（在内核源码 `arch/x86/include/uapi/asm/bootparam.h` 中定义）。
+
+Bootloader 必须在这个结构体中填入以下关键信息，内核才能正常初始化：
+
+| 偏移量/字段 | 变量名         | 含义与约定                                               |
+| --------------- | ------------------ | ------------------------------------------------------------ |
+| `0x01E8`        | `hardware_subarch` | 硬件子架构（PC 兼容机填 0）                                  |
+| `0x0210`        | `type_of_loader`   | Bootloader 的类型 ID（例如 GRUB, LILO 都有特定 ID）          |
+| `0x0211`        | `loadflags`        | 引导标志（如 `0x01` 代表内核被加载到了高位内存 `0x100000`）  |
+| `0x0218`        | `ramdisk_image`    | 内存文件系统 (initrd/initramfs) 的 32 位物理起始地址     |
+| `0x021C`        | `ramdisk_size`     | initrd/initramfs 的字节大小                                  |
+| `0x0228`        | `cmd_line_ptr`     | 内核命令行参数字符串 (如 `root=/dev/sda1 ro`) 的 32 位物理绝对地址 |
+| `0x02D0`        | `e820_entries`     | E820 内存物理布局条目的数量                                  |
+| `0x02D8`        | `e820_table`       | 从 BIOS 15h 探测到的物理内存地图表（E820 Map）           |
+
+> [!note]
+>
+> 为什么叫 "Zero Page"？因为早期的内核实现中，这个结构体被放在实模式内存的 `0x90000` 处（初始化为全0，然后填入参数），故而得名。
+
+通常，x86下的32位BootLoader会将内核镜像加载到1MB处，启动参数则加载到`0x90000`（576KB）处。但Linux内核早已支持可重定位特定，只需要修改参数块的`relocatable_kernel`，就可以将内核和启动参数加载到任何满足对齐要求且可访问的地址中。
+
+>  [!tip]
+>
+> Linux的对齐要求一般为2MB，具体对齐取决于内核配置 。这种对齐要求通常是为了适配大页内存映射，减少内核代码的访问延迟。
+
+### 从硬盘启动
+
+经过刚才的一番折腾，我们已经可以彻底抛弃`initramfs`了。只需要启动磁盘即可。
+
+```bash
+./build.sh install ~/linux-7.0.8/disk.img
+cd ~/linux-7.0.8/
+qemu-system-x86_64 -drive file=disk.img,format=raw,if=virtio -serial stdio
+```
+
+![image-20260528002731981](./assets/image-20260528002731981.png)
+
+### UEFI启动
+
+未完待续
+
+### 重新加入initramfs
+
+#### 内核模块
+
+## 结语
