@@ -936,10 +936,11 @@ sudo mkfs.ext4 -F "${LOOP}p2"
 mkdir -p boot_partition root_partition
 sudo mount -t vfat "${LOOP}p1" boot_partition
 sudo mount -t ext4 "${LOOP}p2" root_partition
-sudo cp arch/x86/boot/bzImage boot_partition/vmlinuz
+sudo cp arch/x86/boot/bzImage boot_partition/VMLINUZ
 # 这里的配置是我们接下来自己写的bootloader会加载的配置文件，现在还用不上。
-echo -e 'kernel=/vmlinuz\ncmdline=root=/dev/vda2 rw console=ttyS0' | sudo tee boot_partition/BOOT.CFG
-sudo cp -r -- ~/glibc-2.43/build/stage/* root_partition/
+echo -e 'kernel=/VMLINUZ\ncmdline=root=/dev/vda2 rw console=ttyS0' | sudo tee boot_partition/BOOT.CFG
+sudo cp -a ~/glibc-2.43/build/stage/. root_partition/
+sudo chown -R 0:0 root_partition/
 ls boot_partition/ root_partition/
 sudo umount boot_partition root_partition
 rm -rf boot_partition root_partition
@@ -1034,7 +1035,7 @@ qemu-system-x86_64 -drive file=boot.bin,format=raw -debugcon stdio
 
 ### 从镜像引导Linux
 
-要想能引导Linux，就需要先从磁盘中读取镜像。本章中，我们通过BIOS终端读取硬盘，并通过解析最基本的FAT分区来获取Linux本体。在这里我们先写一个最小的可进入32位系统的一套代码。
+要想能引导Linux，就需要先从磁盘中读取镜像。本章中，我们通过BIOS中断读取硬盘，并通过解析最基本的FAT分区来获取Linux本体。在这里我们先写一个最小的可进入32位系统的一套代码。
 
 ::: code-group
 ```asm [stage1.S]
@@ -1061,7 +1062,7 @@ _start:
   call into_32_flat_mode
 
 load_next_code:
-  /* 从磁盘加载所有代码，我们假设读8KB */
+  /* 从磁盘加载后续代码。这里先写死读取2个扇区，后面会改成由构建脚本回填实际扇区数。 */
   /* 开一块栈空间存储DAP结构体 */
   pushw %BP
   pushw %ds
@@ -1073,7 +1074,7 @@ load_next_code:
   /* 设置DAP结构体 */
   movb $0x10, (%si)       /* DAP size */
   movb $0, 1(%si)      /* reserved */
-  movw $2, 2(%si)     /* TODO: 读取扇区数量应该从read_sector_count中获取，但这取决于后处理 */
+  movw $2, 2(%si)     /* TODO: 后续应从read_sector_count中读取实际扇区数 */
   movw $(0x7C00+512), 4(%si) /* offset: 0x7C00 + 512 */
   movw $0, 6(%si) /* segment: 0x0000 */
   movl $1, 8(%si) /* lba: 1 */
@@ -1174,9 +1175,6 @@ into_32_flat_mode:
 .org 442
 read_sector_count:
 .word 0
-
-.org 510
-.word 0xAA55
 
 /* stage2 */
 .code32
@@ -1367,7 +1365,7 @@ run() {
     -debugcon stdio
 }
 
-install() {
+  install() {
   local img="$1"
 
   if [ -z "$img" ]; then
@@ -1380,8 +1378,9 @@ install() {
   local size
   size=$(stat -c '%s' boot.bin)
 
-  # boot.bin 最多允许占用 MBR + 后续 2047 个扇区
-  # 即 512 * 2048 字节，覆盖 LBA 0 ~ LBA 2047
+  # boot.bin 最多允许占用 MBR + 后续 2047 个扇区。
+  # 传统MBR分区常从1MiB开始，也就是LBA 2048；LBA 1~2047这段MBR gap通常可供bootloader存放后续阶段。
+  # 这里覆盖 LBA 0 ~ LBA 2047，不能超过第一个分区起始位置。
   local max_size=$((512 * 2048))
 
   if [ "$size" -gt "$max_size" ]; then
@@ -1409,12 +1408,15 @@ clean)
 run)
   run
   ;;
-rebuild)
-  clean
-  build
-  ;;
+  rebuild)
+    clean
+    build
+    ;;
+  install)
+    install "$2"
+    ;;
 *)
-  echo "Usage: $0 [build|clean|run|rebuild]"
+  echo "Usage: $0 [build|clean|run|rebuild|install <disk-image>]"
   exit 1
   ;;
 esac
@@ -1422,15 +1424,15 @@ esac
 
 :::
 
-此时已经有了一个从16位实模式到32位保护模式的完整入口，且该保护模式为平坦模式，可以直接访问全部4GB物理内存。
+此时已经有了一个从16位实模式到32位保护模式的完整入口，且该保护模式为平坦模式，线性地址和物理地址基本直接对应。实际可访问范围仍取决于机器内存布局、设备MMIO空洞和后续获取到的BIOS/E820信息。
 
-不得不说写一个支持文件系统访问的BootLoader还是非常复杂的，这里一个文章放不下，我将会在下方提供打包好的源码下载。
+不得不说写一个支持文件系统访问的BootLoader还是非常复杂的，这里一个文章放不下，我将会在下方提供打包好的源码下载：[bootloader.tar.gz](./assets/bootloader.tar.gz)。
 
 #### FAT32文件系统
 
 如果是两年前我写这篇文章，肯定就用将操作系统刷写到特定扇区的方式来做教学，毕竟即使再简单的文件系统，也需要研究个一周左右才能写出一个基本的没有问题的驱动，但现在时代变了，AI的出现让这种体力活变得轻松了许多，所以我用codex vibe了一个FAT32的只读驱动。编写这个文件系统驱动的目的非常简单：我希望大家能理解操作系统内核就是一段普通数据，它既可以放在硬盘的指定位置中固定读取，也可以以一个文件的形式让可以理解文件系统的BootLoader去加载。BootLoader提供的功能越多，启动的灵活性就越高。目前Linux世界中最通用的GRUB引导器，可以识别绝大多数常用系统，并通过文本格式的配置来决定如何引导操作系统。
 
-这个小型的FAT32驱动，会寻找启动盘下的第一个FAT32分区，并读取根目录下的`/boot.cfg`文件，若读取成功，则会解析文件中的Linux内核位置和启动参数。随后进入引导Linux环节。
+这个小型的FAT32驱动，会寻找启动盘下的第一个FAT32分区，并读取根目录下的`/BOOT.CFG`文件，若读取成功，则会解析文件中的Linux内核位置和启动参数。这里统一使用FAT目录项中常见的8.3大写文件名，避免自己实现大小写折叠逻辑。随后进入引导Linux环节。
 
 ![image-20260527233754057](./assets/image-20260527233754057.png)
 
