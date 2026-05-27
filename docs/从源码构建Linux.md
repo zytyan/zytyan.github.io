@@ -1365,7 +1365,7 @@ run() {
     -debugcon stdio
 }
 
-  install() {
+install() {
   local img="$1"
 
   if [ -z "$img" ]; then
@@ -1408,13 +1408,13 @@ clean)
 run)
   run
   ;;
-  rebuild)
-    clean
-    build
-    ;;
-  install)
-    install "$2"
-    ;;
+rebuild)
+  clean
+  build
+  ;;
+install)
+  install "$2"
+  ;;
 *)
   echo "Usage: $0 [build|clean|run|rebuild|install <disk-image>]"
   exit 1
