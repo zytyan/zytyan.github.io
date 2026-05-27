@@ -1033,10 +1033,11 @@ qemu-system-x86_64 -drive file=boot.bin,format=raw -debugcon stdio
 ### 从镜像引导Linux
 
 要想能引导Linux，就需要先从磁盘中读取镜像。本章中，我们通过BIOS终端读取硬盘，并通过解析最基本的FAT分区来获取Linux本体。
+
 ::: code-group
 ```asm [stage1.S]
 .code16
-.section .text, "ax", @progbits
+.section .stage1, "ax", @progbits
 
 .global _start
 .global read_disk_lba_16
@@ -1149,7 +1150,7 @@ info_load_success:
 boot_driver_id:
   .byte 0x00 /* 从启动时的寄存器中获取驱动器号 */
 
-
+.section .text, "ax", @progbits
 into_32_flat_mode:
   /* 关中断 */
   cli
@@ -1308,7 +1309,119 @@ void protected_mode_C_entry() {
   }
 }
 ```
+
+```ld [boot.ld]
+ENTRY(_start)
+
+SECTIONS
+{
+  . = 0x7c00;
+  .boot : {
+    *(.stage1)
+  }
+  ASSERT(SIZEOF(.boot) <= 446, "Error: stage1 section exceeds 512 bytes!")
+  . = 0x7c00 + 510;
+  .mbr : {
+    BYTE(0x55)
+    BYTE(0xAA)
+  }
+  . = 0x7c00+512;
+  .text ALIGN(4): {
+    *(.text*)
+    *(.rodata*)
+    *(.data*)
+  }
+  .bss ALIGN(4): {
+    *(.bss*)
+  }
+  /DISCARD/ : {
+    *(.eh_frame*)
+  }
+
+}
+```
+
+```bash [buil.sh]
+#!/usr/bin/env bash
+set -e
+
+build() {
+  mkdir -p build
+  as --32 -g stage1.S -o build/stage1.o
+  gcc -m32 -fno-builtin -fno-pic -fno-pie -c -g lib.c -o build/lib.o
+  gcc -m32 -fno-builtin -fno-pic -fno-pie -c -g main.c -o build/main.o
+  ld -m elf_i386 -T boot.ld build/stage1.o build/lib.o build/main.o -o boot.elf
+  objcopy -O binary boot.elf boot.bin
+}
+
+clean() {
+  rm -rf build boot.elf boot.bin
+}
+
+run() {
+  build
+  qemu-system-x86_64 \
+    -drive file=boot.bin,format=raw \
+    -debugcon stdio
+}
+
+install() {
+  local img="$1"
+
+  if [ -z "$img" ]; then
+    echo "Usage: $0 install <disk-image>"
+    exit 1
+  fi
+
+  build
+
+  local size
+  size=$(stat -c '%s' boot.bin)
+
+  # boot.bin 最多允许占用 MBR + 后续 2047 个扇区
+  # 即 512 * 2048 字节，覆盖 LBA 0 ~ LBA 2047
+  local max_size=$((512 * 2048))
+
+  if [ "$size" -gt "$max_size" ]; then
+    echo "Error: boot.bin too large: $size bytes, max is $max_size bytes"
+    exit 1
+  fi
+
+  # 1. 只写 MBR 前 446 字节，保留目标镜像里的分区表
+  dd if=boot.bin of="$img" bs=1 count=446 conv=notrunc
+
+  # 2. 从 boot.bin 的第 512 字节开始，写入目标镜像 LBA 1 开始的位置
+  #    最多写 2047 个扇区
+  if [ "$size" -gt 512 ]; then
+    dd if=boot.bin of="$img" bs=512 skip=1 seek=1 count=2047 conv=notrunc
+  fi
+}
+
+case "${1:-build}" in
+build)
+  build
+  ;;
+clean)
+  clean
+  ;;
+run)
+  run
+  ;;
+rebuild)
+  clean
+  build
+  ;;
+*)
+  echo "Usage: $0 [build|clean|run|rebuild]"
+  exit 1
+  ;;
+esac
+```
+
 :::
+
+此时已经有了一个从16位实模式到32位保护模式的完整入口，且该保护模式为平坦模式，可以直接访问全部4GB物理内存。
+
 
 **未完待续**
 
