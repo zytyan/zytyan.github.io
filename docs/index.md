@@ -8,9 +8,15 @@ aside: false
 
 <section class="post-list">
   <article class="post-card">
-    <a class="post-title" href="/%E4%BB%8E%E6%BA%90%E7%A0%81%E6%9E%84%E5%BB%BALinux">从源码构建Linux</a>
+    <a class="post-title" href="/%E4%BD%8E%E7%BA%A7%E6%8C%87%E4%BB%A4%E7%9A%84%E7%BB%9F%E4%B8%80%E6%A8%A1%E5%9E%8B%EF%BC%9A%E8%AE%A1%E7%AE%97%E3%80%81%E8%AE%BF%E5%AD%98%E3%80%81%E6%8E%A7%E5%88%B6%E6%B5%81%E4%B8%8E%E7%8E%AF%E5%A2%83%E4%BA%A4%E4%BA%92">低级指令的统一模型：计算、访存、控制流与环境交互</a>
+    <time datetime="2026-06-02 18:39:22">2026-06-02</time>
+    <p>学习C语言后，一个进阶的方向就是学习汇编。学习汇编对逆向分析、程序调试及系统编程都有帮助，然而很多人对汇编望而却步，认为其指令繁多、功能复杂，把汇编学习看做背诵指令表，导致无法真正理解其设计。本文将会以ARM64汇编为主线，并通过对照x86...</p>
+    <a class="post-more" href="/%E4%BD%8E%E7%BA%A7%E6%8C%87%E4%BB%A4%E7%9A%84%E7%BB%9F%E4%B8%80%E6%A8%A1%E5%9E%8B%EF%BC%9A%E8%AE%A1%E7%AE%97%E3%80%81%E8%AE%BF%E5%AD%98%E3%80%81%E6%8E%A7%E5%88%B6%E6%B5%81%E4%B8%8E%E7%8E%AF%E5%A2%83%E4%BA%A4%E4%BA%92">阅读全文</a>
+  </article>
+  <article class="post-card">
+    <a class="post-title" href="/%E4%BB%8E%E6%BA%90%E7%A0%81%E6%9E%84%E5%BB%BALinux">从源码构建一个最小 Linux 系统</a>
     <time datetime="2026-05-21 00:39:22">2026-05-21</time>
-    <p>从源码构建Linux内核 本文基于WSL2，Debian13发行版。 环境准备 WSL配置 请确保您使用了Windows11或Windows10的较高版本，以保证对WSL2有完善的支持。 在本文编写时（2026 05 17），该命令会下载D...</p>
+    <p>从源码构建一个最小 Linux 系统 本文基于WSL2，Debian13发行版。 严格来说，Linux 只是操作系统内核。本文会先从源码编译并运行 Linux 内核，再逐步补上 init 进程、initramfs、glibc、BusyBox...</p>
     <a class="post-more" href="/%E4%BB%8E%E6%BA%90%E7%A0%81%E6%9E%84%E5%BB%BALinux">阅读全文</a>
   </article>
   <article class="post-card">
@@ -60,12 +66,6 @@ aside: false
     <time datetime="2024-09-21 17:01:46">2024-09-21</time>
     <p>原子操作 原子操作在不同的语境下有不同的含义。在CPU中，原子操作是一种不会被打断的操作，CPU的任何一条指令都是原子操作。在编程语言中，原子操作通常用来操作内存中的值，而此时原子形容的是读写内存时以一个整体进行操作，不会因为其他核心或硬件...</p>
     <a class="post-more" href="/%E5%8E%9F%E5%AD%90%E8%AE%A1%E6%95%B0%E4%B8%8E%E5%86%85%E5%AD%98%E5%BA%8F">阅读全文</a>
-  </article>
-  <article class="post-card">
-    <a class="post-title" href="/%E5%A6%82%E4%BD%95%E9%85%8D%E7%BD%AEiptables">如何配置iptables</a>
-    <time datetime="2024-08-26 01:07:15">2024-08-26</time>
-    <p>iptables 是Linux中的网络工具，其工作在用户空间，可以用来操作内核空间的 netfilter 模块，以自由控制经过该主机的包。它替换了老版的 ipchains ，提供了更多的功能。而其后继者是 nftable ，它比 iptab...</p>
-    <a class="post-more" href="/%E5%A6%82%E4%BD%95%E9%85%8D%E7%BD%AEiptables">阅读全文</a>
   </article>
 </section>
 
