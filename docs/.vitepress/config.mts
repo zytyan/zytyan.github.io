@@ -20,7 +20,7 @@ export default defineConfig({
     },
     outline: {
       label: '目录',
-      level: [2, 4],
+      level: [2],
     },
     docFooter: {
       prev: '上一篇',
